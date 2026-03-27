@@ -10,7 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        debrief = pkgs.stdenv.mkDerivation {
+        mkDebrief = { archiveDir ? null }: pkgs.stdenv.mkDerivation {
           pname = "debrief";
           version = "0.1.0";
           src = ./.;
@@ -22,12 +22,14 @@
             cp -r bin src package.json $out/lib/debrief/
             mkdir -p $out/bin
             makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/debrief \
-              --add-flags "$out/lib/debrief/bin/debrief.mjs"
+              --add-flags "$out/lib/debrief/bin/debrief.mjs" \
+              ${pkgs.lib.optionalString (archiveDir != null) "--set DEBRIEF_DIR \"${archiveDir}\""}
           '';
         };
       in {
-        packages.default = debrief;
-        apps.default = flake-utils.lib.mkApp { drv = debrief; };
+        packages.default = mkDebrief {};
+        lib.mkDebrief = mkDebrief;
+        apps.default = flake-utils.lib.mkApp { drv = mkDebrief {}; };
       }
     );
 }
