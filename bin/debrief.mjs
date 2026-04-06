@@ -29,11 +29,16 @@ Options:
   --help             Show help
   --version          Show version
 
+Archive types:
+  /local/path            Local filesystem
+  user@host:/path        Remote filesystem (SSH + rsync)
+  --git <repo-url>       Git repo (clone + commit + push)
+
 Examples:
   debrief init ~/my-sessions
+  debrief init --git git@github.com:you/sessions.git
   debrief connect
   debrief collect
-  debrief collect --dry-run
   debrief report --dark
   debrief review --dark --from 2025-01-01`);
   process.exit(args[0] ? 0 : 1);
@@ -52,6 +57,7 @@ function parseFlags(args) {
     else if (arg === "--codex-only" || arg === "--codex") { flags.codex = true; flags.codexOnly = true; }
     else if (arg === "--commit") { flags.commit = true; }
     else if (arg === "--stdin") { flags.stdin = true; }
+    else if (arg === "--git" && i + 1 < args.length) { flags.git = args[++i]; }
     else if (arg === "--status") { flags.status = true; }
     else if (arg === "--remove") { flags.remove = true; }
     else if (arg === "--concurrency" && i + 1 < args.length) { flags.concurrency = parseInt(args[++i]); }
@@ -76,7 +82,7 @@ async function main() {
   switch (command) {
     case "init": {
       const { run } = await import("../src/init.mjs");
-      await run({ dir: flags._[0] });
+      await run({ dir: flags._[0], git: flags.git });
       break;
     }
     case "connect": {

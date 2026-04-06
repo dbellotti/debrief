@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { homedir, hostname } from "node:os";
+import { ensureDir, rsyncPath, exec as remoteExec } from "./remote.mjs";
+import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +18,7 @@ export async function run(opts) {
 
 async function ingestStdin(opts) {
   const archiveDir = opts.archive;
+  const archiveType = await getArchiveType(archiveDir);
   let input = "";
   for await (const chunk of process.stdin) {
     input += chunk;
@@ -40,21 +42,29 @@ async function ingestStdin(opts) {
   const claudeDir = join(homedir(), ".claude");
   let relPath;
   if (transcriptPath.startsWith(claudeDir)) {
-    relPath = join("claude", transcriptPath.slice(claudeDir.length + 1));
+    relPath = "claude/" + transcriptPath.slice(claudeDir.length + 1);
   } else {
     relPath = transcriptPath.split("/").slice(-3).join("/");
   }
 
-  const destPath = join(archiveDir, "machines", host, relPath);
-  await mkdir(dirname(destPath), { recursive: true });
-  await copyFile(transcriptPath, destPath);
-  console.log(`Archived: ${destPath}`);
+  const destRel = `machines/${host}/${relPath}`;
+  const parentRel = destRel.split("/").slice(0, -1).join("/");
+  await ensureDir(archiveDir, parentRel);
+
+  const dest = rsyncPath(archiveDir, destRel);
+  await execFileAsync("rsync", ["-a", transcriptPath, dest]);
+  console.log(`Archived: ${dest}`);
+
+  if (archiveType === "git") {
+    await gitCommitAndPush(archiveDir, `collect: ${host} - ${transcriptPath.split("/").pop()}`);
+  }
 }
 
 async function fullSync(opts) {
   const archiveDir = opts.archive;
+  const archiveType = await getArchiveType(archiveDir);
   const host = hostname().replace(/\.local$/, "");
-  const dest = join(archiveDir, "machines", host);
+  const machineRel = `machines/${host}`;
 
   const claudeDir = process.env.CLAUDE_DIR || join(homedir(), ".claude");
   const codexDir = process.env.CODEX_DIR || join(homedir(), ".codex");
@@ -62,20 +72,26 @@ async function fullSync(opts) {
   const syncClaude = !opts.codexOnly;
   const syncCodex = !opts.claudeOnly;
 
+  // Pull latest for git archives
+  if (archiveType === "git") {
+    await gitPull(archiveDir);
+  }
+
   let synced = false;
 
   if (syncClaude) {
     const src = join(claudeDir, "projects");
     if (existsSync(src)) {
+      const destDisplay = rsyncPath(archiveDir, `${machineRel}/claude/projects`);
       console.log("=== Claude Code ===");
       console.log(`  Source: ${src}/`);
-      console.log(`  Dest:   ${dest}/claude/projects/`);
+      console.log(`  Dest:   ${destDisplay}/`);
 
       if (opts.dryRun) {
-        await rsync(src + "/", dest + "/claude/projects/", true);
+        await rsync(src + "/", rsyncPath(archiveDir, `${machineRel}/claude/projects`) + "/", true);
       } else {
-        await mkdir(join(dest, "claude", "projects"), { recursive: true });
-        await rsync(src + "/", dest + "/claude/projects/", false);
+        await ensureDir(archiveDir, `${machineRel}/claude/projects`);
+        await rsync(src + "/", rsyncPath(archiveDir, `${machineRel}/claude/projects`) + "/", false);
         synced = true;
       }
       console.log("");
@@ -87,15 +103,16 @@ async function fullSync(opts) {
   if (syncCodex) {
     const src = join(codexDir, "sessions");
     if (existsSync(src)) {
+      const destDisplay = rsyncPath(archiveDir, `${machineRel}/codex/sessions`);
       console.log("=== Codex ===");
       console.log(`  Sessions: ${src}/`);
-      console.log(`       --> ${dest}/codex/sessions/`);
+      console.log(`       --> ${destDisplay}/`);
 
       if (opts.dryRun) {
-        await rsync(src + "/", dest + "/codex/sessions/", true);
+        await rsync(src + "/", rsyncPath(archiveDir, `${machineRel}/codex/sessions`) + "/", true);
       } else {
-        await mkdir(join(dest, "codex", "sessions"), { recursive: true });
-        await rsync(src + "/", dest + "/codex/sessions/", false);
+        await ensureDir(archiveDir, `${machineRel}/codex/sessions`);
+        await rsync(src + "/", rsyncPath(archiveDir, `${machineRel}/codex/sessions`) + "/", false);
         synced = true;
       }
 
@@ -104,8 +121,8 @@ async function fullSync(opts) {
         if (existsSync(fp)) {
           console.log(`  ${f}`);
           if (!opts.dryRun) {
-            await mkdir(join(dest, "codex"), { recursive: true });
-            await copyFile(fp, join(dest, "codex", f));
+            await ensureDir(archiveDir, `${machineRel}/codex`);
+            await execFileAsync("rsync", ["-a", fp, rsyncPath(archiveDir, `${machineRel}/codex/${f}`)]);
           }
         }
       }
@@ -121,8 +138,12 @@ async function fullSync(opts) {
     return;
   }
 
-  if (opts.commit) {
-    await gitCommit(archiveDir, host);
+  // Git archives always commit+push; filesystem archives only with --commit
+  if (archiveType === "git") {
+    const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
+    await gitCommitAndPush(archiveDir, `collect: ${host} - ${ts}`);
+  } else if (opts.commit) {
+    await gitCommitLegacy(archiveDir, host, machineRel);
   }
 
   console.log("Done.");
@@ -141,26 +162,24 @@ async function rsync(src, dest, dryRun) {
   }
 }
 
-async function gitCommit(archiveDir, host) {
+// Legacy git commit for non-git-type archives that happen to be git repos (--commit flag)
+async function gitCommitLegacy(archiveDir, host, machineRel) {
   try {
-    await execFileAsync("git", ["-C", archiveDir, "rev-parse", "--git-dir"]);
+    await remoteExec(archiveDir, `git -C '${archiveDir}' rev-parse --git-dir`);
   } catch {
     console.log("Archive is not a git repo, skipping commit.");
     return;
   }
 
   try {
-    const { stdout: status } = await execFileAsync("git", ["-C", archiveDir, "status", "--porcelain"]);
+    const { stdout: status } = await remoteExec(archiveDir, `git -C '${archiveDir}' status --porcelain`);
     if (!status.trim()) {
       console.log("No new session data to commit.");
       return;
     }
 
-    await execFileAsync("git", ["-C", archiveDir, "add", `machines/${host}/`]);
     const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
-    const { stdout: diffOutput } = await execFileAsync("git", ["-C", archiveDir, "diff", "--cached", "--name-only"]);
-    const fileCount = diffOutput.trim().split("\n").filter(Boolean).length;
-    await execFileAsync("git", ["-C", archiveDir, "commit", "-m", `sync: ${host} - ${ts} (${fileCount} files changed)`]);
+    await remoteExec(archiveDir, `cd '${archiveDir}' && git add '${machineRel}/' && git diff --cached --name-only | wc -l | xargs -I{} git commit -m 'sync: ${host} - ${ts} ({} files changed)'`);
     console.log("Committed.");
   } catch (e) {
     console.error(`Git commit failed: ${e.message}`);

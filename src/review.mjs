@@ -1,11 +1,13 @@
 import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { listJsonl, parseJsonlLines } from "./parsers/common.mjs";
 import { condenseClaude } from "./parsers/claude.mjs";
 import { condenseCodex } from "./parsers/codex.mjs";
+import { localMirror } from "./remote.mjs";
+import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -13,107 +15,132 @@ const execFileAsync = promisify(execFile);
 process.env.AGENT_SPEECH_NESTED = "1";
 
 export async function run(opts) {
-  const machinesDir = join(opts.archive, "machines");
-  const facetsDir = join(opts.archive, "facets");
-  const reportsDir = join(opts.archive, "reports");
-  const providerFilter = opts.claude ? "claude" : opts.codex ? "codex" : "all";
-  const concurrency = opts.concurrency || 5;
-  const isDark = !!opts.dark;
-  const minDurationSec = (opts.minDuration || 60);
-  const minTurns = opts.minTurns || 1;
+  const archiveType = await getArchiveType(opts.archive);
 
-  // Check for CLI availability
-  const haveClaude = await checkCmd("claude");
-  const haveCodex = await checkCmd("codex");
-  if (!haveClaude && !haveCodex) {
-    console.error("Neither 'claude' nor 'codex' CLI found on PATH. At least one is required.");
-    process.exit(1);
+  if (archiveType === "git") {
+    await gitPull(opts.archive);
   }
 
-  console.log("Loading sessions...");
-  const sessions = await loadCondensedSessions(machinesDir, providerFilter, minDurationSec, minTurns, opts);
-  console.log(`Found ${sessions.length} sessions with conversation data\n`);
-
-  if (sessions.length === 0) {
-    console.log("No sessions to analyze.");
-    return;
-  }
-
-  // Load cached facets
-  await mkdir(facetsDir, { recursive: true });
-  const cachedIds = new Set();
+  const mirror = await localMirror(opts.archive, ["machines", "facets"]);
   try {
-    const facetFiles = await readdir(facetsDir);
-    for (const f of facetFiles) {
-      if (f.endsWith(".json")) cachedIds.add(f.replace(".json", ""));
+    const machinesDir = join(mirror.localPath, "machines");
+    const facetsDir = join(mirror.localPath, "facets");
+    const providerFilter = opts.claude ? "claude" : opts.codex ? "codex" : "all";
+    const concurrency = opts.concurrency || 5;
+    const isDark = !!opts.dark;
+    const minDurationSec = (opts.minDuration || 60);
+    const minTurns = opts.minTurns || 1;
+
+    // Check for CLI availability
+    const haveClaude = await checkCmd("claude");
+    const haveCodex = await checkCmd("codex");
+    if (!haveClaude && !haveCodex) {
+      console.error("Neither 'claude' nor 'codex' CLI found on PATH. At least one is required.");
+      process.exit(1);
     }
-  } catch {}
 
-  const needsExtraction = sessions.filter(s => !cachedIds.has(s.id));
-  const alreadyCached = sessions.length - needsExtraction.length;
-  console.log(`Cached: ${alreadyCached}, Need extraction: ${needsExtraction.length}\n`);
+    console.log("Loading sessions...");
+    const sessions = await loadCondensedSessions(machinesDir, providerFilter, minDurationSec, minTurns, opts);
+    console.log(`Found ${sessions.length} sessions with conversation data\n`);
 
-  // Extract facets with concurrency
-  if (needsExtraction.length > 0) {
-    let completed = 0;
-    await runWithConcurrency(needsExtraction, concurrency, async (session) => {
-      completed++;
-      const prefix = `[${completed}/${needsExtraction.length}]`;
-      const label = `${session.provider}/${session.project}/${session.id.slice(0, 8)}`;
-      process.stdout.write(`${prefix} Extracting: ${label}...`);
+    if (sessions.length === 0) {
+      console.log("No sessions to analyze.");
+      return;
+    }
 
-      try {
-        const facet = await extractFacet(session, haveClaude, haveCodex, facetsDir);
-        await writeFile(join(facetsDir, `${session.id}.json`), JSON.stringify(facet, null, 2), "utf-8");
-        console.log(` ${facet.outcome} (${facet.session_type})`);
-      } catch (e) {
-        console.log(` FAILED: ${e.message}`);
+    // Load cached facets
+    await mkdir(facetsDir, { recursive: true });
+    const cachedIds = new Set();
+    try {
+      const facetFiles = await readdir(facetsDir);
+      for (const f of facetFiles) {
+        if (f.endsWith(".json")) cachedIds.add(f.replace(".json", ""));
       }
-    });
-    console.log("");
-  }
+    } catch {}
 
-  // Load all facets
-  const allFacets = [];
-  for (const session of sessions) {
-    const facetPath = join(facetsDir, `${session.id}.json`);
-    if (existsSync(facetPath)) {
-      try {
-        allFacets.push(JSON.parse(await readFile(facetPath, "utf-8")));
-      } catch {}
+    const needsExtraction = sessions.filter(s => !cachedIds.has(s.id));
+    const alreadyCached = sessions.length - needsExtraction.length;
+    console.log(`Cached: ${alreadyCached}, Need extraction: ${needsExtraction.length}\n`);
+
+    // Extract facets with concurrency
+    if (needsExtraction.length > 0) {
+      let completed = 0;
+      await runWithConcurrency(needsExtraction, concurrency, async (session) => {
+        completed++;
+        const prefix = `[${completed}/${needsExtraction.length}]`;
+        const label = `${session.provider}/${session.project}/${session.id.slice(0, 8)}`;
+        process.stdout.write(`${prefix} Extracting: ${label}...`);
+
+        try {
+          const facet = await extractFacet(session, haveClaude, haveCodex, facetsDir);
+          await writeFile(join(facetsDir, `${session.id}.json`), JSON.stringify(facet, null, 2), "utf-8");
+          console.log(` ${facet.outcome} (${facet.session_type})`);
+        } catch (e) {
+          console.log(` FAILED: ${e.message}`);
+        }
+      });
+      console.log("");
     }
+
+    // Persist facets: sync back to remote (SSH) or commit (git)
+    await mirror.syncBack("facets");
+    if (archiveType === "git") {
+      await gitCommitAndPush(opts.archive, `review: extracted ${needsExtraction.length} new facets`);
+    }
+
+    // Load all facets
+    const allFacets = [];
+    for (const session of sessions) {
+      const facetPath = join(facetsDir, `${session.id}.json`);
+      if (existsSync(facetPath)) {
+        try {
+          allFacets.push(JSON.parse(await readFile(facetPath, "utf-8")));
+        } catch {}
+      }
+    }
+
+    console.log(`Loaded ${allFacets.length} facets for synthesis\n`);
+
+    if (allFacets.length === 0) {
+      console.log("No facets to synthesize.");
+      return;
+    }
+
+    // Synthesize
+    let synthesis;
+    try {
+      synthesis = await synthesize(allFacets);
+    } catch (e) {
+      console.log("Synthesis failed:", e.message);
+      synthesis = "Synthesis could not be generated. Run again to retry.";
+    }
+
+    // Render and save
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filterSuffix = [opts.project, opts.machine, opts.from, opts.to].filter(Boolean).join("-").replace(/[^a-zA-Z0-9-]/g, "_");
+    const reportName = filterSuffix ? `review-${dateStr}-${filterSuffix}` : `review-${dateStr}`;
+    let reportPath;
+    if (opts.output) {
+      reportPath = resolve(opts.output);
+    } else if (archiveType === "local") {
+      const { mkdir: mkdirLocal } = await import("node:fs/promises");
+      const reportsDir = join(mirror.localPath, "reports");
+      await mkdirLocal(reportsDir, { recursive: true });
+      reportPath = join(reportsDir, `${reportName}.html`);
+    } else {
+      reportPath = resolve(`${reportName}.html`);
+    }
+    const html = renderReport(allFacets, synthesis, isDark);
+    await writeFile(reportPath, html, "utf-8");
+    console.log(`\nReport saved to: ${reportPath}`);
+
+    try {
+      const { exec } = await import("node:child_process");
+      exec(`open "${reportPath}"`);
+    } catch {}
+  } finally {
+    await mirror.cleanup();
   }
-
-  console.log(`Loaded ${allFacets.length} facets for synthesis\n`);
-
-  if (allFacets.length === 0) {
-    console.log("No facets to synthesize.");
-    return;
-  }
-
-  // Synthesize
-  let synthesis;
-  try {
-    synthesis = await synthesize(allFacets);
-  } catch (e) {
-    console.log("Synthesis failed:", e.message);
-    synthesis = "Synthesis could not be generated. Run again to retry.";
-  }
-
-  // Render and save
-  await mkdir(reportsDir, { recursive: true });
-  const dateStr = new Date().toISOString().slice(0, 10);
-  const filterSuffix = [opts.project, opts.machine, opts.from, opts.to].filter(Boolean).join("-").replace(/[^a-zA-Z0-9-]/g, "_");
-  const reportName = filterSuffix ? `review-${dateStr}-${filterSuffix}` : `review-${dateStr}`;
-  const reportPath = join(reportsDir, `${reportName}.html`);
-  const html = renderReport(allFacets, synthesis, isDark);
-  await writeFile(reportPath, html, "utf-8");
-  console.log(`\nReport saved to: ${reportPath}`);
-
-  try {
-    const { exec } = await import("node:child_process");
-    exec(`open "${reportPath}"`);
-  } catch {}
 }
 
 async function checkCmd(name) {

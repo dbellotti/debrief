@@ -1,32 +1,52 @@
 import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { listJsonl, parseJsonlLines } from "./parsers/common.mjs";
 import { parseClaudeSession } from "./parsers/claude.mjs";
 import { parseCodexSession } from "./parsers/codex.mjs";
+import { localMirror } from "./remote.mjs";
+import { getArchiveType, gitPull } from "./archive.mjs";
 
 export async function run(opts) {
-  const machinesDir = join(opts.archive, "machines");
-  const providerFilter = opts.claude ? "claude" : opts.codex ? "codex" : "all";
-  const isDark = !!opts.dark;
+  const archiveType = await getArchiveType(opts.archive);
 
-  const dateStr = new Date().toISOString().slice(0, 10);
-  const reportsDir = join(opts.archive, "reports");
-  await mkdir(reportsDir, { recursive: true });
-  const outputPath = opts.output || join(reportsDir, `report-${dateStr}.html`);
+  if (archiveType === "git") {
+    await gitPull(opts.archive);
+  }
 
-  console.log(`Loading sessions (provider: ${providerFilter})...`);
-  const sessions = await loadSessions(machinesDir, providerFilter);
-  console.log(`Parsed ${sessions.length} sessions`);
-
-  const html = renderHTML(sessions, providerFilter, isDark);
-  await writeFile(outputPath, html, "utf-8");
-  console.log(`Report saved to: ${outputPath}`);
-
+  const mirror = await localMirror(opts.archive, ["machines"]);
   try {
-    const { exec } = await import("node:child_process");
-    exec(`open "${outputPath}"`);
-  } catch {}
+    const machinesDir = join(mirror.localPath, "machines");
+    const providerFilter = opts.claude ? "claude" : opts.codex ? "codex" : "all";
+    const isDark = !!opts.dark;
+    const dateStr = new Date().toISOString().slice(0, 10);
+
+    let outputPath;
+    if (opts.output) {
+      outputPath = resolve(opts.output);
+    } else if (archiveType === "local") {
+      const reportsDir = join(mirror.localPath, "reports");
+      await mkdir(reportsDir, { recursive: true });
+      outputPath = join(reportsDir, `report-${dateStr}.html`);
+    } else {
+      outputPath = resolve(`report-${dateStr}.html`);
+    }
+
+    console.log(`Loading sessions (provider: ${providerFilter})...`);
+    const sessions = await loadSessions(machinesDir, providerFilter);
+    console.log(`Parsed ${sessions.length} sessions`);
+
+    const html = renderHTML(sessions, providerFilter, isDark);
+    await writeFile(outputPath, html, "utf-8");
+    console.log(`Report saved to: ${outputPath}`);
+
+    try {
+      const { exec } = await import("node:child_process");
+      exec(`open "${outputPath}"`);
+    } catch {}
+  } finally {
+    await mirror.cleanup();
+  }
 }
 
 async function loadSessions(machinesDir, providerFilter) {

@@ -10,43 +10,101 @@ Zero runtime dependencies. Shells out to `claude` / `codex` CLIs for qualitative
 
 ## Install
 
-```sh
-# Via nix flake (recommended)
-nix profile install github:dbellotti/debrief
+### Nix + home-manager (recommended)
 
-# Or run directly
+Add the flake input to your dotfiles:
+
+```nix
+# flake.nix
+inputs.debrief.url = "github:dbellotti/debrief";
+```
+
+Enable the home-manager module:
+
+```nix
+imports = [ inputs.debrief.homeManagerModules.default ];
+
+programs.debrief = {
+  enable = true;
+  package = inputs.debrief.packages.${system}.default;
+
+  # Git-backed archive (recommended)
+  git.remote = "git@github.com:you/sessions.git";
+
+  # Local clone path (defaults to ~/.local/share/debrief)
+  # archive = "/custom/path";
+};
+```
+
+On `home-manager switch`, this:
+1. Puts `debrief` on PATH
+2. Writes `~/.config/debrief/config.json` with the archive path, type, and remote
+3. Clones the git repo to the archive path (if `git.remote` is set and clone doesn't exist)
+4. Ensures `machines/` and `facets/` directories exist in the archive
+
+### Updating
+
+debrief is managed through nix. To update:
+
+```sh
+nix flake update debrief    # in your dotfiles repo
+home-manager switch          # rebuild with new version
+```
+
+There is no separate update mechanism. The nix store is read-only — the installed binary always matches the pinned flake ref. This is intentional: all machines get the same version when their dotfiles are updated.
+
+### Without nix
+
+```sh
+# Run directly
 nix run github:dbellotti/debrief -- --help
 
-# Or clone and alias
-git clone https://github.com/dbellotti/debrief.git
-alias debrief="node ~/path/to/debrief/bin/debrief.mjs"
+# Or install to nix profile
+nix profile install github:dbellotti/debrief
 ```
 
 Requires Node.js >= 18.
 
 ## Quick start
 
+If using the home-manager module, the archive is already configured. Just run:
+
 ```sh
-# Set up an archive directory
-debrief init ~/my-sessions
-cd ~/my-sessions
-
-# Hook into Claude Code for automatic capture
-debrief connect
-
-# Backfill existing sessions
-debrief collect
-
-# Generate reports
-debrief report --dark
-debrief review --dark
+debrief connect              # install SessionEnd hook
+debrief collect              # backfill existing sessions
+debrief report --dark        # generate dashboard
 ```
+
+For manual setup without home-manager:
+
+```sh
+debrief init --git git@github.com:you/sessions.git
+debrief connect
+debrief collect
+```
+
+## Archive types
+
+| Type | Target | Sync mechanism | Auth |
+|---|---|---|---|
+| Local | `/path/to/dir` | filesystem | none |
+| SSH | `user@host:/path` | rsync over SSH | SSH key |
+| Git | `--git <repo-url>` | clone + commit + push | existing git auth |
+
+Git archives auto-commit and push on `collect`. No `--commit` flag needed.
 
 ## Commands
 
 ### `debrief init [dir]`
 
-Bootstrap a new session archive. Creates `machines/`, `facets/`, and `.gitignore`.
+Bootstrap a new session archive. Creates `machines/`, `facets/`, `.gitignore`, and writes `~/.config/debrief/config.json`.
+
+```sh
+debrief init ~/my-sessions                                    # local filesystem
+debrief init user@host:~/sessions                             # SSH remote
+debrief init --git git@github.com:you/sessions.git            # git repo (default path)
+debrief init --git git@github.com:you/sessions.git ~/sessions # git repo (custom path)
+```
 
 ### `debrief connect`
 
@@ -67,8 +125,10 @@ debrief collect                # full sync
 debrief collect --dry-run      # preview
 debrief collect --claude-only  # Claude Code only
 debrief collect --codex-only   # Codex only
-debrief collect --commit       # git commit after sync
+debrief collect --commit       # git commit after sync (filesystem archives only)
 ```
+
+For git archives, collect always commits and pushes. For SSH archives, `--commit` triggers a remote git commit if the archive is a repo.
 
 Also supports `--stdin` for hook-driven single-file ingest (used internally by `debrief connect`).
 
@@ -106,11 +166,10 @@ Caches per-session facets in `<archive>/facets/`. Re-runs only analyze new sessi
 The tool finds your archive directory in this order:
 
 1. `--archive <path>` flag
-2. `DEBRIEF_DIR` environment variable
-3. If the current directory contains `machines/`, use it
-4. `~/.local/share/debrief` as default
-
-Set-and-forget: `export DEBRIEF_DIR=~/my-sessions` in your shell profile.
+2. `~/.config/debrief/config.json` (managed by home-manager or `debrief init`)
+3. `DEBRIEF_DIR` environment variable
+4. If the current directory contains `machines/`, use it
+5. `~/.local/share/debrief` as default
 
 ## How it works
 
@@ -122,7 +181,7 @@ Set-and-forget: `export DEBRIEF_DIR=~/my-sessions` in your shell profile.
 For belt-and-suspenders:
 
 ```sh
-0 */6 * * * debrief collect --commit  # cron sync every 6 hours
+0 */6 * * * debrief collect  # cron sync every 6 hours
 ```
 
 ## License
