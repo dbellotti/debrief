@@ -186,4 +186,4 @@ For belt-and-suspenders:
 
 ## License
 
-Apache 2.0
+MIT
