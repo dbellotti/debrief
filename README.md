@@ -10,16 +10,35 @@ Zero runtime dependencies. Shells out to `claude` / `codex` CLIs for qualitative
 
 ## Install
 
-### Nix + home-manager (recommended)
+Requires Node.js >= 18. No npm dependencies.
 
-Add the flake input to your dotfiles:
+### Clone and symlink
+
+```sh
+git clone https://github.com/dbellotti/debrief.git ~/.local/share/debrief-cli
+ln -s ~/.local/share/debrief-cli/bin/debrief.mjs ~/.local/bin/debrief
+```
+
+To update, `git pull` in the clone directory.
+
+### Nix
+
+```sh
+# Run without installing
+nix run github:dbellotti/debrief -- --help
+
+# Or install to your profile
+nix profile install github:dbellotti/debrief
+```
+
+### Nix + home-manager
+
+The flake also exports a home-manager module that declaratively manages the config file, PATH entry, and (optionally) git clone setup.
 
 ```nix
 # flake.nix
 inputs.debrief.url = "github:dbellotti/debrief";
 ```
-
-Enable the home-manager module:
 
 ```nix
 imports = [ inputs.debrief.homeManagerModules.default ];
@@ -27,61 +46,22 @@ imports = [ inputs.debrief.homeManagerModules.default ];
 programs.debrief = {
   enable = true;
   package = inputs.debrief.packages.${system}.default;
-
-  # Git-backed archive (recommended)
   git.remote = "git@github.com:you/sessions.git";
-
-  # Local clone path (defaults to ~/.local/share/debrief)
-  # archive = "/custom/path";
 };
 ```
 
-On `home-manager switch`, this:
-1. Puts `debrief` on PATH
-2. Writes `~/.config/debrief/config.json` with the archive path, type, and remote
-3. Clones the git repo to the archive path (if `git.remote` is set and clone doesn't exist)
-4. Ensures `machines/` and `facets/` directories exist in the archive
-
-### Updating
-
-debrief is managed through nix. To update:
-
-```sh
-nix flake update debrief    # in your dotfiles repo
-home-manager switch          # rebuild with new version
-```
-
-There is no separate update mechanism. The nix store is read-only — the installed binary always matches the pinned flake ref. This is intentional: all machines get the same version when their dotfiles are updated.
-
-### Without nix
-
-```sh
-# Run directly
-nix run github:dbellotti/debrief -- --help
-
-# Or install to nix profile
-nix profile install github:dbellotti/debrief
-```
-
-Requires Node.js >= 18.
+On `home-manager switch`, this puts `debrief` on PATH, writes `~/.config/debrief/config.json`, and clones the git remote if it doesn't exist yet. To update, run `nix flake update debrief` in your dotfiles repo and rebuild.
 
 ## Quick start
 
-If using the home-manager module, the archive is already configured. Just run:
-
 ```sh
+debrief init --git git@github.com:you/sessions.git
 debrief connect              # install SessionEnd hook
 debrief collect              # backfill existing sessions
 debrief report --dark        # generate dashboard
 ```
 
-For manual setup without home-manager:
-
-```sh
-debrief init --git git@github.com:you/sessions.git
-debrief connect
-debrief collect
-```
+If using the home-manager module, skip `init` — the archive is already configured.
 
 ## Archive types
 
