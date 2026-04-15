@@ -42,7 +42,7 @@ export async function run(opts) {
 
 async function initGit(opts) {
   const repoUrl = opts.git;
-  const dir = resolve(opts.dir || join(homedir(), ".local", "share", "debrief"));
+  const dir = resolve(opts.dir || join(homedir(), ".local", "share", "debrief", "archive"));
 
   if (existsSync(join(dir, ".git"))) {
     console.log(`${dir} is already a git repo.`);

@@ -45,7 +45,7 @@
 
             archive = lib.mkOption {
               type = lib.types.str;
-              default = "${config.xdg.dataHome}/debrief";
+              default = "${config.xdg.dataHome}/debrief/archive";
               description = "Local path to the session archive directory";
               example = "/home/user/sessions";
             };

@@ -149,7 +149,7 @@ The tool finds your archive directory in this order:
 2. `~/.config/debrief/config.json` (managed by home-manager or `debrief init`)
 3. `DEBRIEF_DIR` environment variable
 4. If the current directory contains `machines/`, use it
-5. `~/.local/share/debrief` as default
+5. `~/.local/share/debrief/archive` as default
 
 ## How it works
 

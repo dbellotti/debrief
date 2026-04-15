@@ -28,7 +28,7 @@ export function resolveArchive(flags = {}) {
 
   if (process.env.DEBRIEF_DIR) return resolvePath(process.env.DEBRIEF_DIR);
   if (existsSync(join(process.cwd(), "machines"))) return process.cwd();
-  return join(homedir(), ".local", "share", "debrief");
+  return join(homedir(), ".local", "share", "debrief", "archive");
 }
 
 export function configPath() {
