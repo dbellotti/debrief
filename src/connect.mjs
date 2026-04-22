@@ -4,7 +4,8 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
-const HOOK_COMMAND = "debrief collect --stdin";
+const HOOK_COMMAND = "debrief-hook";
+const LEGACY_HOOK_COMMAND = "debrief collect --stdin";
 
 export async function run(opts) {
   if (opts.status) {
@@ -38,12 +39,16 @@ async function saveSettings(settings) {
   await writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n", "utf-8");
 }
 
+function isDebriefHook(command) {
+  return command === HOOK_COMMAND || command === LEGACY_HOOK_COMMAND;
+}
+
 async function isInstalled() {
   const settings = await loadSettings();
   const hooks = settings.hooks?.SessionEnd;
   if (!Array.isArray(hooks)) return false;
   return hooks.some(entry =>
-    Array.isArray(entry.hooks) && entry.hooks.some(h => h.command === HOOK_COMMAND)
+    Array.isArray(entry.hooks) && entry.hooks.some(h => isDebriefHook(h.command))
   );
 }
 
@@ -51,6 +56,23 @@ async function installHook() {
   const settings = await loadSettings();
   if (!settings.hooks) settings.hooks = {};
   if (!Array.isArray(settings.hooks.SessionEnd)) settings.hooks.SessionEnd = [];
+
+  // Migrate legacy hook to wrapper
+  let migrated = false;
+  for (const entry of settings.hooks.SessionEnd) {
+    if (!Array.isArray(entry.hooks)) continue;
+    for (const h of entry.hooks) {
+      if (h.command === LEGACY_HOOK_COMMAND) {
+        h.command = HOOK_COMMAND;
+        migrated = true;
+      }
+    }
+  }
+  if (migrated) {
+    await saveSettings(settings);
+    console.log("Hook migrated to debrief-hook wrapper.");
+    return;
+  }
 
   const already = settings.hooks.SessionEnd.some(entry =>
     Array.isArray(entry.hooks) && entry.hooks.some(h => h.command === HOOK_COMMAND)
@@ -75,7 +97,7 @@ async function removeHook() {
   if (!settings.hooks?.SessionEnd) return;
 
   settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(entry =>
-    !(Array.isArray(entry.hooks) && entry.hooks.some(h => h.command === HOOK_COMMAND))
+    !(Array.isArray(entry.hooks) && entry.hooks.some(h => isDebriefHook(h.command)))
   );
 
   if (settings.hooks.SessionEnd.length === 0) delete settings.hooks.SessionEnd;

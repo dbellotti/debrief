@@ -23,6 +23,7 @@
             mkdir -p $out/bin
             makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/debrief \
               --add-flags "$out/lib/debrief/bin/debrief.mjs"
+            install -Dm755 bin/debrief-hook.sh $out/bin/debrief-hook
           '';
         };
       in {
