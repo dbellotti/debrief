@@ -19,6 +19,12 @@ export async function run(opts) {
 async function ingestStdin(opts) {
   const archiveDir = opts.archive;
   const archiveType = await getArchiveType(archiveDir);
+
+  // Pull latest before ingesting to avoid push conflicts
+  if (archiveType === "git") {
+    await gitPull(archiveDir);
+  }
+
   let input = "";
   for await (const chunk of process.stdin) {
     input += chunk;

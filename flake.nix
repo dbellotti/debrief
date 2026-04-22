@@ -76,11 +76,17 @@
               lib.hm.dag.entryAfter [ "writeBoundary" ] ''
                 if [ ! -d "${cfg.archive}/.git" ]; then
                   echo "debrief: cloning ${cfg.git.remote} to ${cfg.archive}..."
-                  ${pkgs.git}/bin/git clone "${cfg.git.remote}" "${cfg.archive}" 2>/dev/null || {
+                  if ! ${pkgs.git}/bin/git clone "${cfg.git.remote}" "${cfg.archive}"; then
+                    echo "debrief: clone failed, initializing fresh repo..."
                     mkdir -p "${cfg.archive}"
                     ${pkgs.git}/bin/git -C "${cfg.archive}" init
                     ${pkgs.git}/bin/git -C "${cfg.archive}" remote add origin "${cfg.git.remote}"
-                  }
+                  fi
+                fi
+                # If repo has no commits (failed clone fallback), try to fetch remote
+                if ! ${pkgs.git}/bin/git -C "${cfg.archive}" rev-parse HEAD >/dev/null 2>&1; then
+                  ${pkgs.git}/bin/git -C "${cfg.archive}" fetch origin 2>/dev/null && \
+                    ${pkgs.git}/bin/git -C "${cfg.archive}" checkout -b main origin/main 2>/dev/null || true
                 fi
                 mkdir -p "${cfg.archive}/machines" "${cfg.archive}/facets"
               ''
