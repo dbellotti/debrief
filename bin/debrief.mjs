@@ -27,13 +27,8 @@ Commands:
 
 Options:
   --archive <path>   Path to archive directory
-  --help             Show help
+  --help             Show help (use <command> --help for command options)
   --version          Show version
-
-Schedule options:
-  --cron <expr>      Cron schedule (default: "0 3 * * *" = nightly 3am)
-  --status           Show schedule status
-  --remove           Remove scheduled collection
 
 Archive types:
   /local/path            Local filesystem
@@ -85,7 +80,96 @@ function parseFlags(args) {
 
 const flags = parseFlags(args.slice(1));
 
+const commandHelp = {
+  init: `Usage: debrief init [dir] [options]
+
+Set up a new session archive.
+
+Options:
+  --git <repo-url>   Initialize as a git-managed archive
+  --help             Show this help
+
+Examples:
+  debrief init ~/my-sessions
+  debrief init --git git@github.com:you/sessions.git`,
+
+  connect: `Usage: debrief connect [options]
+
+Install/remove the Claude Code SessionEnd hook for automatic capture.
+
+Options:
+  --status           Check if hook is installed
+  --remove           Remove the hook
+  --help             Show this help`,
+
+  collect: `Usage: debrief collect [options]
+
+Sync Claude Code and Codex sessions to the archive.
+
+Options:
+  --archive <path>   Path to archive directory
+  --claude-only      Only sync Claude Code sessions
+  --codex-only       Only sync Codex sessions
+  --dry-run          Show what would be synced without syncing
+  --commit           Git commit after sync (filesystem archives)
+  --stdin            Ingest a single session from stdin (used by hooks)
+  --help             Show this help`,
+
+  schedule: `Usage: debrief schedule [options]
+
+Install/remove a scheduled service that runs debrief collect.
+Uses systemd user timers on Linux and launchd agents on macOS.
+
+Options:
+  --cron <expr>      Cron schedule (default: "0 3 * * *" = nightly 3am)
+  --status           Show schedule status
+  --remove           Remove the scheduled service
+  --help             Show this help
+
+Examples:
+  debrief schedule
+  debrief schedule --cron "0 */6 * * *"
+  debrief schedule --status
+  debrief schedule --remove`,
+
+  report: `Usage: debrief report [options]
+
+Generate a quantitative insights dashboard (HTML).
+
+Options:
+  --archive <path>   Path to archive directory
+  --dark             Dark theme
+  --from <date>      Start date filter (YYYY-MM-DD)
+  --to <date>        End date filter (YYYY-MM-DD)
+  --project <name>   Filter by project
+  --machine <name>   Filter by machine
+  -o <path>          Output file path
+  --help             Show this help`,
+
+  review: `Usage: debrief review [options]
+
+Generate qualitative session analysis via LLM.
+
+Options:
+  --archive <path>   Path to archive directory
+  --dark             Dark theme
+  --from <date>      Start date filter (YYYY-MM-DD)
+  --to <date>        End date filter (YYYY-MM-DD)
+  --project <name>   Filter by project
+  --machine <name>   Filter by machine
+  --min-duration <s> Minimum session duration in seconds
+  --min-turns <n>    Minimum number of turns
+  --concurrency <n>  Parallel LLM requests
+  -o <path>          Output file path
+  --help             Show this help`,
+};
+
 async function main() {
+  if (flags.help && commandHelp[command]) {
+    console.log(commandHelp[command]);
+    process.exit(0);
+  }
+
   switch (command) {
     case "init": {
       const { run } = await import("../src/init.mjs");
