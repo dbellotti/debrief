@@ -152,34 +152,34 @@
                 '';
             })
 
-            (lib.mkIf cfg.schedule.enable (
-              if pkgs.stdenv.isDarwin then {
-                launchd.agents.debrief-collect = {
-                  enable = true;
-                  config = {
-                    Label = "com.debrief.collect";
-                    ProgramArguments = [ "${cfg.package}/bin/debrief" "collect" ];
-                    StartCalendarInterval = cronToLaunchdIntervals cfg.schedule.cron;
-                  };
+            (lib.mkIf (cfg.schedule.enable && !pkgs.stdenv.isDarwin) {
+              systemd.user.services.debrief-collect = {
+                Unit.Description = "Debrief session collector";
+                Service = {
+                  Type = "oneshot";
+                  ExecStart = "${cfg.package}/bin/debrief collect";
                 };
-              } else {
-                systemd.user.services.debrief-collect = {
-                  Unit.Description = "Debrief session collector";
-                  Service = {
-                    Type = "oneshot";
-                    ExecStart = "${cfg.package}/bin/debrief collect";
-                  };
+              };
+              systemd.user.timers.debrief-collect = {
+                Unit.Description = "Run debrief collect on schedule";
+                Timer = {
+                  OnCalendar = cronToOnCalendar cfg.schedule.cron;
+                  Persistent = true;
                 };
-                systemd.user.timers.debrief-collect = {
-                  Unit.Description = "Run debrief collect on schedule";
-                  Timer = {
-                    OnCalendar = cronToOnCalendar cfg.schedule.cron;
-                    Persistent = true;
-                  };
-                  Install.WantedBy = [ "timers.target" ];
+                Install.WantedBy = [ "timers.target" ];
+              };
+            })
+
+            (lib.mkIf (cfg.schedule.enable && pkgs.stdenv.isDarwin) {
+              launchd.agents.debrief-collect = {
+                enable = true;
+                config = {
+                  Label = "com.debrief.collect";
+                  ProgramArguments = [ "${cfg.package}/bin/debrief" "collect" ];
+                  StartCalendarInterval = cronToLaunchdIntervals cfg.schedule.cron;
                 };
-              }
-            ))
+              };
+            })
           ]);
         };
     };
