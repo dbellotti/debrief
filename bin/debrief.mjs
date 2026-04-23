@@ -21,6 +21,7 @@ Commands:
   init [dir]     Set up a new session archive
   connect        Hook into Claude Code for automatic capture
   collect        Sync sessions to the archive
+  schedule       Install/remove scheduled collection service
   report         Generate quantitative insights dashboard
   review         Generate qualitative session analysis
 
@@ -28,6 +29,11 @@ Options:
   --archive <path>   Path to archive directory
   --help             Show help
   --version          Show version
+
+Schedule options:
+  --cron <expr>      Cron schedule (default: "0 3 * * *" = nightly 3am)
+  --status           Show schedule status
+  --remove           Remove scheduled collection
 
 Archive types:
   /local/path            Local filesystem
@@ -58,6 +64,7 @@ function parseFlags(args) {
     else if (arg === "--commit") { flags.commit = true; }
     else if (arg === "--stdin") { flags.stdin = true; }
     else if (arg === "--git" && i + 1 < args.length) { flags.git = args[++i]; }
+    else if (arg === "--cron" && i + 1 < args.length) { flags.cron = args[++i]; }
     else if (arg === "--status") { flags.status = true; }
     else if (arg === "--remove") { flags.remove = true; }
     else if (arg === "--concurrency" && i + 1 < args.length) { flags.concurrency = parseInt(args[++i]); }
@@ -94,6 +101,11 @@ async function main() {
       const archive = resolveArchive(flags);
       const { run } = await import("../src/collect.mjs");
       await run({ ...flags, archive });
+      break;
+    }
+    case "schedule": {
+      const { run } = await import("../src/schedule.mjs");
+      await run(flags);
       break;
     }
     case "report": {
