@@ -1,19 +1,11 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { localMirror } from "./remote.mjs";
-import { getArchiveType, gitPull } from "./archive.mjs";
+import { withArchive } from "./archive.mjs";
 import { loadSessionFiles } from "./sessions.mjs";
 import { parse } from "./parsers/registry.mjs";
 
 export async function run(opts) {
-  const archiveType = await getArchiveType(opts.archive);
-
-  if (archiveType === "git") {
-    await gitPull(opts.archive);
-  }
-
-  const mirror = await localMirror(opts.archive, ["machines", "cloud"]);
-  try {
+  await withArchive(opts.archive, ["machines", "cloud"], async ({ localPath, archiveType }) => {
     const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
     const providerFilter = hasFilter
       ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
@@ -25,7 +17,7 @@ export async function run(opts) {
     if (opts.output) {
       outputPath = resolve(opts.output);
     } else if (archiveType === "local") {
-      const reportsDir = join(mirror.localPath, "reports");
+      const reportsDir = join(localPath, "reports");
       await mkdir(reportsDir, { recursive: true });
       outputPath = join(reportsDir, `report-${dateStr}.html`);
     } else {
@@ -33,7 +25,7 @@ export async function run(opts) {
     }
 
     console.log(`Loading sessions (provider: ${providerFilter ? [...providerFilter].join(", ") : "all"})...`);
-    const tuples = await loadSessionFiles(mirror.localPath, { providers: providerFilter });
+    const tuples = await loadSessionFiles(localPath, { providers: providerFilter });
     const sessions = tuples.map(t => { try { return parse(t); } catch { return null; } }).filter(s => s && s.startTime).sort((a, b) => a.startTime.localeCompare(b.startTime));
     console.log(`Parsed ${sessions.length} sessions`);
 
@@ -45,9 +37,7 @@ export async function run(opts) {
       const { exec } = await import("node:child_process");
       exec(`open "${outputPath}"`);
     } catch {}
-  } finally {
-    await mirror.cleanup();
-  }
+  });
 }
 
 

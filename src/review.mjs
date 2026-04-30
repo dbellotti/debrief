@@ -3,8 +3,7 @@ import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { localMirror } from "./remote.mjs";
-import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
+import { withArchive } from "./archive.mjs";
 import { loadSessionFiles } from "./sessions.mjs";
 import { condense } from "./parsers/registry.mjs";
 
@@ -14,15 +13,8 @@ const execFileAsync = promisify(execFile);
 process.env.AGENT_SPEECH_NESTED = "1";
 
 export async function run(opts) {
-  const archiveType = await getArchiveType(opts.archive);
-
-  if (archiveType === "git") {
-    await gitPull(opts.archive);
-  }
-
-  const mirror = await localMirror(opts.archive, ["machines", "facets", "cloud"]);
-  try {
-    const facetsDir = join(mirror.localPath, "facets");
+  await withArchive(opts.archive, ["machines", "facets", "cloud"], async ({ localPath, archiveType, syncBack, commitAndPush }) => {
+    const facetsDir = join(localPath, "facets");
     const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
     const providerFilter = hasFilter
       ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
@@ -41,7 +33,7 @@ export async function run(opts) {
     }
 
     console.log("Loading sessions...");
-    const tuples = await loadSessionFiles(mirror.localPath, { providers: providerFilter === "all" ? null : providerFilter, machine: opts.machine });
+    const tuples = await loadSessionFiles(localPath, { providers: providerFilter === "all" ? null : providerFilter, machine: opts.machine });
     const sessions = tuples
       .filter(t => t.provider !== "claude-ai" ? t.raw.length > 2 : true)
       .map(t => { try { return condense(t); } catch { return null; } })
@@ -96,10 +88,8 @@ export async function run(opts) {
     }
 
     // Persist facets: sync back to remote (SSH) or commit (git)
-    await mirror.syncBack("facets");
-    if (archiveType === "git") {
-      await gitCommitAndPush(opts.archive, `review: extracted ${needsExtraction.length} new facets`);
-    }
+    await syncBack("facets");
+    await commitAndPush(`review: extracted ${needsExtraction.length} new facets`);
 
     // Load all facets
     const allFacets = [];
@@ -136,9 +126,8 @@ export async function run(opts) {
     if (opts.output) {
       reportPath = resolve(opts.output);
     } else if (archiveType === "local") {
-      const { mkdir: mkdirLocal } = await import("node:fs/promises");
-      const reportsDir = join(mirror.localPath, "reports");
-      await mkdirLocal(reportsDir, { recursive: true });
+      const reportsDir = join(localPath, "reports");
+      await mkdir(reportsDir, { recursive: true });
       reportPath = join(reportsDir, `${reportName}.html`);
     } else {
       reportPath = resolve(`${reportName}.html`);
@@ -151,9 +140,7 @@ export async function run(opts) {
       const { exec } = await import("node:child_process");
       exec(`open "${reportPath}"`);
     } catch {}
-  } finally {
-    await mirror.cleanup();
-  }
+  });
 }
 
 async function checkCmd(name) {

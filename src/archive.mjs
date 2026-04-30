@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { isRemote } from "./remote.mjs";
+import { isRemote, localMirror } from "./remote.mjs";
 import { readConfig } from "./resolve-archive.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -52,5 +52,21 @@ export async function gitCommitAndPush(archivePath, message) {
   } catch (e) {
     console.error(`Git commit failed: ${e.stderr?.trim() || e.message}`);
     return false;
+  }
+}
+
+export async function withArchive(archivePath, subdirs, callback) {
+  const archiveType = getArchiveType(archivePath);
+  if (archiveType === "git") await gitPull(archivePath);
+  const mirror = await localMirror(archivePath, subdirs);
+  try {
+    return await callback({
+      localPath: mirror.localPath,
+      archiveType,
+      syncBack: (...subs) => mirror.syncBack(...subs),
+      commitAndPush: (msg) => archiveType === "git" ? gitCommitAndPush(archivePath, msg) : Promise.resolve(false),
+    });
+  } finally {
+    await mirror.cleanup();
   }
 }

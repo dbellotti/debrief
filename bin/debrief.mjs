@@ -109,7 +109,7 @@ Options:
 Authenticate with claude.ai for cloud conversation sync.
 Prompts for your session cookie and validates it.
 
-The cookie is stored in ~/.config/debrief/config.json.`,
+The cookie is stored in ~/.local/share/debrief/auth.json.`,
 
   collect: `Usage: debrief collect [options]
 
