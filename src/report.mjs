@@ -1,12 +1,11 @@
-import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { existsSync } from "node:fs";
-import { listJsonl, parseJsonlLines } from "./parsers/common.mjs";
 import { parseClaudeSession } from "./parsers/claude-code.mjs";
 import { parseCodexSession } from "./parsers/codex.mjs";
 import { parseClaudeAiSession } from "./parsers/claude-ai.mjs";
 import { localMirror } from "./remote.mjs";
 import { getArchiveType, gitPull } from "./archive.mjs";
+import { loadSessionFiles } from "./sessions.mjs";
 
 export async function run(opts) {
   const archiveType = await getArchiveType(opts.archive);
@@ -17,11 +16,10 @@ export async function run(opts) {
 
   const mirror = await localMirror(opts.archive, ["machines", "cloud"]);
   try {
-    const machinesDir = join(mirror.localPath, "machines");
     const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
     const providerFilter = hasFilter
       ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
-      : "all";
+      : null;
     const isDark = !!opts.dark;
     const dateStr = new Date().toISOString().slice(0, 10);
 
@@ -36,12 +34,13 @@ export async function run(opts) {
       outputPath = resolve(`report-${dateStr}.html`);
     }
 
-    const cloudDir = join(mirror.localPath, "cloud");
-    console.log(`Loading sessions (provider: ${providerFilter === "all" ? "all" : [...providerFilter].join(", ")})...`);
-    const sessions = await loadSessions(machinesDir, cloudDir, providerFilter);
+    console.log(`Loading sessions (provider: ${providerFilter ? [...providerFilter].join(", ") : "all"})...`);
+    const tuples = await loadSessionFiles(mirror.localPath, { providers: providerFilter });
+    const parsers = { claude: (t) => parseClaudeSession(t.raw, t.machine), codex: (t) => parseCodexSession(t.raw, t.machine), "claude-ai": (t) => parseClaudeAiSession(t.raw) };
+    const sessions = tuples.map(t => { try { return parsers[t.provider](t); } catch { return null; } }).filter(s => s && s.startTime).sort((a, b) => a.startTime.localeCompare(b.startTime));
     console.log(`Parsed ${sessions.length} sessions`);
 
-    const html = renderHTML(sessions, providerFilter, isDark);
+    const html = renderHTML(sessions, providerFilter || "all", isDark);
     await writeFile(outputPath, html, "utf-8");
     console.log(`Report saved to: ${outputPath}`);
 
@@ -54,49 +53,6 @@ export async function run(opts) {
   }
 }
 
-async function loadSessions(machinesDir, cloudDir, providerFilter) {
-  const sessions = [];
-  let machineDirs;
-  try { machineDirs = await readdir(machinesDir, { withFileTypes: true }); } catch { machineDirs = []; }
-  for (const md of machineDirs) {
-    if (!md.isDirectory()) continue;
-    const machine = md.name;
-    const machineRoot = join(machinesDir, machine);
-    if (providerFilter === "all" || providerFilter.has?.("codex")) {
-      const codexSessions = join(machineRoot, "codex", "sessions");
-      if (existsSync(codexSessions)) {
-        for (const f of await listJsonl(codexSessions)) {
-          try { const lines = parseJsonlLines(await readFile(f, "utf-8")); if (lines.length) sessions.push(parseCodexSession(lines, machine)); } catch {}
-        }
-      }
-    }
-    if (providerFilter === "all" || providerFilter.has?.("claude")) {
-      const claudeProjects = join(machineRoot, "claude", "projects");
-      if (existsSync(claudeProjects)) {
-        for (const f of await listJsonl(claudeProjects)) {
-          if (f.includes("/subagents/")) continue;
-          try { const lines = parseJsonlLines(await readFile(f, "utf-8")); if (lines.length) sessions.push(parseClaudeSession(lines, machine)); } catch {}
-        }
-      }
-    }
-  }
-  // Cloud: claude.ai conversations
-  if (providerFilter === "all" || providerFilter.has?.("claude-ai")) {
-    const claudeAiDir = join(cloudDir, "claude-ai");
-    if (existsSync(claudeAiDir)) {
-      let files;
-      try { files = await readdir(claudeAiDir); } catch { files = []; }
-      for (const f of files) {
-        if (!f.endsWith(".json")) continue;
-        try {
-          const conv = JSON.parse(await readFile(join(claudeAiDir, f), "utf-8"));
-          sessions.push(parseClaudeAiSession(conv));
-        } catch {}
-      }
-    }
-  }
-  return sessions.filter(s => s.startTime).sort((a, b) => a.startTime.localeCompare(b.startTime));
-}
 
 function renderHTML(sessions, providerFilter, isDark) {
   const theme = isDark ? "dark" : "light";
