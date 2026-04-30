@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, hostname } from "node:os";
 import { ensureDir, rsyncPath, exec as remoteExec } from "./remote.mjs";
 import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
+import { loadAuth } from "./auth.mjs";
+import { createClient } from "./cloud/claude-ai.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -75,8 +78,10 @@ async function fullSync(opts) {
   const claudeDir = process.env.CLAUDE_DIR || join(homedir(), ".claude");
   const codexDir = process.env.CODEX_DIR || join(homedir(), ".codex");
 
-  const syncClaude = !opts.codexOnly;
-  const syncCodex = !opts.claudeOnly;
+  const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
+  const syncClaude = !hasFilter || !!opts.claudeCode;
+  const syncCodex = !hasFilter || !!opts.codex;
+  const syncCloudClaudeAi = !hasFilter || !!opts.claudeAi;
 
   // Pull latest for git archives
   if (archiveType === "git") {
@@ -138,9 +143,18 @@ async function fullSync(opts) {
     }
   }
 
+  // Cloud: claude.ai web conversations
+  let partialFailure = false;
+  if (syncCloudClaudeAi) {
+    const result = await syncCloud(archiveDir, opts.dryRun);
+    if (result === "synced") synced = true;
+    if (result === "error") partialFailure = true;
+  }
+
   if (opts.dryRun) return;
   if (!synced) {
     console.log("Nothing to sync.");
+    if (partialFailure) process.exit(1);
     return;
   }
 
@@ -153,6 +167,76 @@ async function fullSync(opts) {
   }
 
   console.log("Done.");
+  if (partialFailure) process.exit(1);
+}
+
+const CLOUD_FETCH_DELAY = 500;
+
+async function syncCloud(archiveDir, dryRun) {
+  const auth = await loadAuth();
+  if (!auth?.cookie || !auth?.orgId) {
+    return "skipped";
+  }
+
+  console.log("=== Claude.ai ===");
+  const client = createClient(auth.cookie);
+
+  let conversations;
+  try {
+    conversations = await client.listConversations(auth.orgId);
+  } catch (e) {
+    if (e.name === "AuthError") {
+      console.warn("  Warning: claude.ai cookie expired or invalid. Skipping cloud sync.");
+      return "error";
+    }
+    throw e;
+  }
+
+  const cloudDir = join(archiveDir, "cloud", "claude-ai");
+  await mkdir(cloudDir, { recursive: true });
+
+  let fetched = 0;
+  let skipped = 0;
+  for (const conv of conversations) {
+    const destPath = join(cloudDir, `${conv.uuid}.json`);
+    // Check if we already have this conversation with the same updated_at
+    if (existsSync(destPath)) {
+      try {
+        const existing = JSON.parse(await readFile(destPath, "utf-8"));
+        if (existing.updated_at === conv.updated_at) {
+          skipped++;
+          continue;
+        }
+      } catch {}
+    }
+
+    if (dryRun) {
+      console.log(`  Would fetch: ${conv.name || conv.uuid}`);
+      fetched++;
+      continue;
+    }
+
+    // Rate limit
+    if (fetched > 0) {
+      await new Promise(r => setTimeout(r, CLOUD_FETCH_DELAY));
+    }
+
+    try {
+      const full = await client.getConversation(auth.orgId, conv.uuid);
+      await writeFile(destPath, JSON.stringify(full, null, 2) + "\n", "utf-8");
+      fetched++;
+    } catch (e) {
+      if (e.name === "AuthError") {
+        console.warn("  Warning: claude.ai cookie expired mid-sync.");
+        return "error";
+      }
+      console.warn(`  Warning: failed to fetch ${conv.uuid}: ${e.message}`);
+    }
+  }
+
+  console.log(`  ${fetched} fetched, ${skipped} up-to-date (${conversations.length} total)`);
+  console.log("");
+  return fetched > 0 ? "synced" : "skipped";
 }
 
 async function rsync(src, dest, dryRun) {

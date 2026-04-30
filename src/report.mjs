@@ -2,8 +2,9 @@ import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { listJsonl, parseJsonlLines } from "./parsers/common.mjs";
-import { parseClaudeSession } from "./parsers/claude.mjs";
+import { parseClaudeSession } from "./parsers/claude-code.mjs";
 import { parseCodexSession } from "./parsers/codex.mjs";
+import { parseClaudeAiSession } from "./parsers/claude-ai.mjs";
 import { localMirror } from "./remote.mjs";
 import { getArchiveType, gitPull } from "./archive.mjs";
 
@@ -14,10 +15,13 @@ export async function run(opts) {
     await gitPull(opts.archive);
   }
 
-  const mirror = await localMirror(opts.archive, ["machines"]);
+  const mirror = await localMirror(opts.archive, ["machines", "cloud"]);
   try {
     const machinesDir = join(mirror.localPath, "machines");
-    const providerFilter = opts.claude ? "claude" : opts.codex ? "codex" : "all";
+    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
+    const providerFilter = hasFilter
+      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
+      : "all";
     const isDark = !!opts.dark;
     const dateStr = new Date().toISOString().slice(0, 10);
 
@@ -32,8 +36,9 @@ export async function run(opts) {
       outputPath = resolve(`report-${dateStr}.html`);
     }
 
-    console.log(`Loading sessions (provider: ${providerFilter})...`);
-    const sessions = await loadSessions(machinesDir, providerFilter);
+    const cloudDir = join(mirror.localPath, "cloud");
+    console.log(`Loading sessions (provider: ${providerFilter === "all" ? "all" : [...providerFilter].join(", ")})...`);
+    const sessions = await loadSessions(machinesDir, cloudDir, providerFilter);
     console.log(`Parsed ${sessions.length} sessions`);
 
     const html = renderHTML(sessions, providerFilter, isDark);
@@ -49,15 +54,15 @@ export async function run(opts) {
   }
 }
 
-async function loadSessions(machinesDir, providerFilter) {
+async function loadSessions(machinesDir, cloudDir, providerFilter) {
   const sessions = [];
   let machineDirs;
-  try { machineDirs = await readdir(machinesDir, { withFileTypes: true }); } catch { return []; }
+  try { machineDirs = await readdir(machinesDir, { withFileTypes: true }); } catch { machineDirs = []; }
   for (const md of machineDirs) {
     if (!md.isDirectory()) continue;
     const machine = md.name;
     const machineRoot = join(machinesDir, machine);
-    if (providerFilter === "all" || providerFilter === "codex") {
+    if (providerFilter === "all" || providerFilter.has?.("codex")) {
       const codexSessions = join(machineRoot, "codex", "sessions");
       if (existsSync(codexSessions)) {
         for (const f of await listJsonl(codexSessions)) {
@@ -65,13 +70,28 @@ async function loadSessions(machinesDir, providerFilter) {
         }
       }
     }
-    if (providerFilter === "all" || providerFilter === "claude") {
+    if (providerFilter === "all" || providerFilter.has?.("claude")) {
       const claudeProjects = join(machineRoot, "claude", "projects");
       if (existsSync(claudeProjects)) {
         for (const f of await listJsonl(claudeProjects)) {
           if (f.includes("/subagents/")) continue;
           try { const lines = parseJsonlLines(await readFile(f, "utf-8")); if (lines.length) sessions.push(parseClaudeSession(lines, machine)); } catch {}
         }
+      }
+    }
+  }
+  // Cloud: claude.ai conversations
+  if (providerFilter === "all" || providerFilter.has?.("claude-ai")) {
+    const claudeAiDir = join(cloudDir, "claude-ai");
+    if (existsSync(claudeAiDir)) {
+      let files;
+      try { files = await readdir(claudeAiDir); } catch { files = []; }
+      for (const f of files) {
+        if (!f.endsWith(".json")) continue;
+        try {
+          const conv = JSON.parse(await readFile(join(claudeAiDir, f), "utf-8"));
+          sessions.push(parseClaudeAiSession(conv));
+        } catch {}
       }
     }
   }

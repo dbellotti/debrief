@@ -19,6 +19,7 @@ if (args[0] === "--help" || args[0] === "-h" || !args[0]) {
 
 Commands:
   init [dir]     Set up a new session archive
+  auth           Authenticate with claude.ai for cloud sync
   connect        Hook into Claude Code for automatic capture
   collect        Sync sessions to the archive
   schedule       Install/remove scheduled collection service
@@ -54,8 +55,9 @@ function parseFlags(args) {
     if (arg === "--archive" && i + 1 < args.length) { flags.archive = args[++i]; }
     else if (arg === "--dark") { flags.dark = true; }
     else if (arg === "--dry-run") { flags.dryRun = true; }
-    else if (arg === "--claude-only" || arg === "--claude") { flags.claude = true; flags.claudeOnly = true; }
-    else if (arg === "--codex-only" || arg === "--codex") { flags.codex = true; flags.codexOnly = true; }
+    else if (arg === "--claude-code") { flags.claudeCode = true; }
+    else if (arg === "--codex") { flags.codex = true; }
+    else if (arg === "--claude-ai") { flags.claudeAi = true; }
     else if (arg === "--commit") { flags.commit = true; }
     else if (arg === "--stdin") { flags.stdin = true; }
     else if (arg === "--git" && i + 1 < args.length) { flags.git = args[++i]; }
@@ -102,14 +104,22 @@ Options:
   --remove           Remove the hook
   --help             Show this help`,
 
+  auth: `Usage: debrief auth
+
+Authenticate with claude.ai for cloud conversation sync.
+Prompts for your session cookie and validates it.
+
+The cookie is stored in ~/.config/debrief/config.json.`,
+
   collect: `Usage: debrief collect [options]
 
-Sync Claude Code and Codex sessions to the archive.
+Sync Claude Code, Codex, and claude.ai sessions to the archive.
 
 Options:
   --archive <path>   Path to archive directory
-  --claude-only      Only sync Claude Code sessions
-  --codex-only       Only sync Codex sessions
+  --claude-code      Only sync Claude Code sessions
+  --codex            Only sync Codex sessions
+  --claude-ai        Only sync claude.ai web conversations
   --dry-run          Show what would be synced without syncing
   --commit           Git commit after sync (filesystem archives)
   --stdin            Ingest a single session from stdin (used by hooks)
@@ -138,6 +148,9 @@ Generate a quantitative insights dashboard (HTML).
 
 Options:
   --archive <path>   Path to archive directory
+  --claude-code      Only include Claude Code sessions
+  --codex            Only include Codex sessions
+  --claude-ai        Only include claude.ai conversations
   --dark             Dark theme
   --from <date>      Start date filter (YYYY-MM-DD)
   --to <date>        End date filter (YYYY-MM-DD)
@@ -152,6 +165,9 @@ Generate qualitative session analysis via LLM.
 
 Options:
   --archive <path>   Path to archive directory
+  --claude-code      Only include Claude Code sessions
+  --codex            Only include Codex sessions
+  --claude-ai        Only include claude.ai conversations
   --dark             Dark theme
   --from <date>      Start date filter (YYYY-MM-DD)
   --to <date>        End date filter (YYYY-MM-DD)
@@ -174,6 +190,11 @@ async function main() {
     case "init": {
       const { run } = await import("../src/init.mjs");
       await run({ dir: flags._[0], git: flags.git });
+      break;
+    }
+    case "auth": {
+      const { run } = await import("../src/auth.mjs");
+      await run();
       break;
     }
     case "connect": {

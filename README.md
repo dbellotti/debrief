@@ -101,10 +101,11 @@ debrief connect --remove   # uninstall hook
 Sync sessions from `~/.claude` and `~/.codex` into the archive.
 
 ```sh
-debrief collect                # full sync
+debrief collect                # full sync (all sources)
 debrief collect --dry-run      # preview
-debrief collect --claude-only  # Claude Code only
-debrief collect --codex-only   # Codex only
+debrief collect --claude-code  # Claude Code only
+debrief collect --codex        # Codex only
+debrief collect --claude-ai    # claude.ai web conversations only
 debrief collect --commit       # git commit after sync (filesystem archives only)
 ```
 

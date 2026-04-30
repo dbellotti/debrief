@@ -4,8 +4,9 @@ import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { listJsonl, parseJsonlLines } from "./parsers/common.mjs";
-import { condenseClaude } from "./parsers/claude.mjs";
+import { condenseClaude } from "./parsers/claude-code.mjs";
 import { condenseCodex } from "./parsers/codex.mjs";
+import { condenseClaudeAi } from "./parsers/claude-ai.mjs";
 import { localMirror } from "./remote.mjs";
 import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
 
@@ -21,11 +22,14 @@ export async function run(opts) {
     await gitPull(opts.archive);
   }
 
-  const mirror = await localMirror(opts.archive, ["machines", "facets"]);
+  const mirror = await localMirror(opts.archive, ["machines", "facets", "cloud"]);
   try {
     const machinesDir = join(mirror.localPath, "machines");
     const facetsDir = join(mirror.localPath, "facets");
-    const providerFilter = opts.claude ? "claude" : opts.codex ? "codex" : "all";
+    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
+    const providerFilter = hasFilter
+      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
+      : "all";
     const concurrency = opts.concurrency || 5;
     const isDark = !!opts.dark;
     const minDurationSec = (opts.minDuration || 60);
@@ -39,8 +43,9 @@ export async function run(opts) {
       process.exit(1);
     }
 
+    const cloudDir = join(mirror.localPath, "cloud");
     console.log("Loading sessions...");
-    const sessions = await loadCondensedSessions(machinesDir, providerFilter, minDurationSec, minTurns, opts);
+    const sessions = await loadCondensedSessions(machinesDir, cloudDir, providerFilter, minDurationSec, minTurns, opts);
     console.log(`Found ${sessions.length} sessions with conversation data\n`);
 
     if (sessions.length === 0) {
@@ -152,16 +157,16 @@ async function checkCmd(name) {
   }
 }
 
-async function loadCondensedSessions(machinesDir, providerFilter, minDurationSec, minTurns, opts) {
+async function loadCondensedSessions(machinesDir, cloudDir, providerFilter, minDurationSec, minTurns, opts) {
   const sessions = [];
   let machineDirs;
-  try { machineDirs = await readdir(machinesDir, { withFileTypes: true }); } catch { return []; }
+  try { machineDirs = await readdir(machinesDir, { withFileTypes: true }); } catch { machineDirs = []; }
   for (const md of machineDirs) {
     if (!md.isDirectory()) continue;
     const machine = md.name;
     const machineRoot = join(machinesDir, machine);
 
-    if (providerFilter === "all" || providerFilter === "codex") {
+    if (providerFilter === "all" || providerFilter.has?.("codex")) {
       const codexSessions = join(machineRoot, "codex", "sessions");
       if (existsSync(codexSessions)) {
         for (const f of await listJsonl(codexSessions)) {
@@ -177,7 +182,7 @@ async function loadCondensedSessions(machinesDir, providerFilter, minDurationSec
       }
     }
 
-    if (providerFilter === "all" || providerFilter === "claude") {
+    if (providerFilter === "all" || providerFilter.has?.("claude")) {
       const claudeProjects = join(machineRoot, "claude", "projects");
       if (existsSync(claudeProjects)) {
         for (const f of await listJsonl(claudeProjects)) {
@@ -191,6 +196,22 @@ async function loadCondensedSessions(machinesDir, providerFilter, minDurationSec
             }
           } catch {}
         }
+      }
+    }
+  }
+  // Cloud: claude.ai conversations
+  if (providerFilter === "all" || providerFilter.has?.("claude-ai")) {
+    const claudeAiDir = join(cloudDir, "claude-ai");
+    if (existsSync(claudeAiDir)) {
+      let files;
+      try { files = await readdir(claudeAiDir); } catch { files = []; }
+      for (const f of files) {
+        if (!f.endsWith(".json")) continue;
+        try {
+          const conv = JSON.parse(await readFile(join(claudeAiDir, f), "utf-8"));
+          const s = condenseClaudeAi(conv);
+          if (s.userTurnCount >= minTurns && s.durationSec >= minDurationSec) sessions.push(s);
+        } catch {}
       }
     }
   }

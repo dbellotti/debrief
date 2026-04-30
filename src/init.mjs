@@ -27,6 +27,7 @@ export async function run(opts) {
 
   await ensureDir(dir, "machines");
   await ensureDir(dir, "facets");
+  await ensureDir(dir, "cloud/claude-ai");
 
   if (!(await existsRemote(dir, ".gitignore"))) {
     await writeRemoteFile(dir, ".gitignore", "machines/\n");
@@ -63,6 +64,7 @@ async function initGit(opts) {
 
   await mkdir(join(dir, "machines"), { recursive: true });
   await mkdir(join(dir, "facets"), { recursive: true });
+  await mkdir(join(dir, "cloud", "claude-ai"), { recursive: true });
 
   if (!existsSync(join(dir, ".gitignore"))) {
     await writeFile(join(dir, ".gitignore"), "reports/\n", "utf-8");
