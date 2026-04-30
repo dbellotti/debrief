@@ -1,11 +1,9 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { parseClaudeSession } from "./parsers/claude-code.mjs";
-import { parseCodexSession } from "./parsers/codex.mjs";
-import { parseClaudeAiSession } from "./parsers/claude-ai.mjs";
 import { localMirror } from "./remote.mjs";
 import { getArchiveType, gitPull } from "./archive.mjs";
 import { loadSessionFiles } from "./sessions.mjs";
+import { parse } from "./parsers/registry.mjs";
 
 export async function run(opts) {
   const archiveType = await getArchiveType(opts.archive);
@@ -36,8 +34,7 @@ export async function run(opts) {
 
     console.log(`Loading sessions (provider: ${providerFilter ? [...providerFilter].join(", ") : "all"})...`);
     const tuples = await loadSessionFiles(mirror.localPath, { providers: providerFilter });
-    const parsers = { claude: (t) => parseClaudeSession(t.raw, t.machine), codex: (t) => parseCodexSession(t.raw, t.machine), "claude-ai": (t) => parseClaudeAiSession(t.raw) };
-    const sessions = tuples.map(t => { try { return parsers[t.provider](t); } catch { return null; } }).filter(s => s && s.startTime).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    const sessions = tuples.map(t => { try { return parse(t); } catch { return null; } }).filter(s => s && s.startTime).sort((a, b) => a.startTime.localeCompare(b.startTime));
     console.log(`Parsed ${sessions.length} sessions`);
 
     const html = renderHTML(sessions, providerFilter || "all", isDark);

@@ -3,12 +3,10 @@ import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { condenseClaude } from "./parsers/claude-code.mjs";
-import { condenseCodex } from "./parsers/codex.mjs";
-import { condenseClaudeAi } from "./parsers/claude-ai.mjs";
 import { localMirror } from "./remote.mjs";
 import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
 import { loadSessionFiles } from "./sessions.mjs";
+import { condense } from "./parsers/registry.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,14 +42,9 @@ export async function run(opts) {
 
     console.log("Loading sessions...");
     const tuples = await loadSessionFiles(mirror.localPath, { providers: providerFilter === "all" ? null : providerFilter, machine: opts.machine });
-    const condensers = {
-      claude: (t) => { const s = condenseClaude(t.raw, t.filepath); s.machine = t.machine; return s; },
-      codex: (t) => { const s = condenseCodex(t.raw, t.filepath); s.machine = t.machine; return s; },
-      "claude-ai": (t) => condenseClaudeAi(t.raw),
-    };
     const sessions = tuples
       .filter(t => t.provider !== "claude-ai" ? t.raw.length > 2 : true)
-      .map(t => { try { return condensers[t.provider](t); } catch { return null; } })
+      .map(t => { try { return condense(t); } catch { return null; } })
       .filter(s => {
         if (!s) return false;
         if (s.userTurnCount < minTurns || s.durationSec < minDurationSec) return false;
