@@ -135,6 +135,12 @@
             (lib.mkIf (cfg.git.remote != null) {
               home.activation.debriefSetup =
                 lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+                  ${lib.optionalString pkgs.stdenv.isDarwin ''
+                    # Home Manager activation runs with a minimal PATH that
+                    # excludes /usr/bin on Darwin, so git cannot find ssh.
+                    # Apple ships ssh at a stable absolute path; point git at it.
+                    export GIT_SSH_COMMAND=/usr/bin/ssh
+                  ''}
                   if [ ! -d "${cfg.archive}/.git" ]; then
                     echo "debrief: cloning ${cfg.git.remote} to ${cfg.archive}..."
                     if ! ${pkgs.git}/bin/git clone "${cfg.git.remote}" "${cfg.archive}"; then
