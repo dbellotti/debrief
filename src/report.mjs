@@ -6,9 +6,9 @@ import { parse } from "./parsers/registry.mjs";
 
 export async function run(opts) {
   await withArchive(opts.archive, ["machines", "cloud"], async ({ localPath, archiveType }) => {
-    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
+    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi || opts.openai;
     const providerFilter = hasFilter
-      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
+      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : []), ...(opts.openai ? ["openai"] : [])])
       : null;
     const isDark = !!opts.dark;
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -542,7 +542,8 @@ function render() {
 
   const providers = [...new Set(sessions.map(s => s.provider))];
   const machines = [...new Set(sessions.map(s => s.machine))];
-  const provLabel = providers.length === 1 ? (providers[0] === "codex" ? "Codex" : "Claude Code") : "All Agents";
+  const provNames = { claude: "Claude Code", codex: "Codex", "claude-ai": "Claude.ai", openai: "ChatGPT" };
+  const provLabel = providers.length === 1 ? (provNames[providers[0]] || providers[0]) : "All Agents";
   document.getElementById("subtitle").textContent = provLabel + " · " + agg.dateRange.start + " to " + agg.dateRange.end + " · " + machines.length + " machine(s) · " + sessions.length + " sessions";
 
   renderCards(agg);

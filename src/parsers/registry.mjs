@@ -1,6 +1,7 @@
 import { parseClaudeSession, condenseClaude } from "./claude-code.mjs";
 import { parseCodexSession, condenseCodex } from "./codex.mjs";
 import { parseClaudeAiSession, condenseClaudeAi } from "./claude-ai.mjs";
+import { parseOpenAiSession, condenseOpenAi } from "./openai.mjs";
 
 const parsers = {
   claude: {
@@ -14,6 +15,10 @@ const parsers = {
   "claude-ai": {
     parse: (t) => parseClaudeAiSession(t.raw),
     condense: (t) => condenseClaudeAi(t.raw),
+  },
+  openai: {
+    parse: (t) => parseOpenAiSession(t.raw),
+    condense: (t) => condenseOpenAi(t.raw),
   },
 };
 

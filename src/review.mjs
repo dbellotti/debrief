@@ -15,9 +15,9 @@ process.env.AGENT_SPEECH_NESTED = "1";
 export async function run(opts) {
   await withArchive(opts.archive, ["machines", "facets", "cloud"], async ({ localPath, archiveType, syncBack, commitAndPush }) => {
     const facetsDir = join(localPath, "facets");
-    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
+    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi || opts.openai;
     const providerFilter = hasFilter
-      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
+      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : []), ...(opts.openai ? ["openai"] : [])])
       : "all";
     const concurrency = opts.concurrency || 5;
     const isDark = !!opts.dark;
@@ -35,7 +35,7 @@ export async function run(opts) {
     console.log("Loading sessions...");
     const tuples = await loadSessionFiles(localPath, { providers: providerFilter === "all" ? null : providerFilter, machine: opts.machine });
     const sessions = tuples
-      .filter(t => t.provider !== "claude-ai" ? t.raw.length > 2 : true)
+      .filter(t => Array.isArray(t.raw) ? t.raw.length > 2 : true)
       .map(t => { try { return condense(t); } catch { return null; } })
       .filter(s => {
         if (!s) return false;

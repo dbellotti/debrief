@@ -36,6 +36,31 @@ const CLAUDE_AI_TUPLE = {
   },
 };
 
+const OPENAI_TUPLE = {
+  provider: "openai",
+  filepath: "/cloud/openai/conv-1.json",
+  machine: null,
+  raw: {
+    conversation_id: "oai-1",
+    default_model_slug: "gpt-4o",
+    current_node: "node-1",
+    mapping: {
+      "node-1": {
+        id: "node-1",
+        message: {
+          id: "m1",
+          author: { role: "user" },
+          create_time: 1748772000,
+          content: { content_type: "text", parts: ["hi"] },
+          metadata: {},
+        },
+        parent: null,
+        children: [],
+      },
+    },
+  },
+};
+
 describe("registry parse", () => {
   it("dispatches claude-code tuples correctly", () => {
     const s = parse(CLAUDE_TUPLE);
@@ -56,6 +81,13 @@ describe("registry parse", () => {
     const s = parse(CLAUDE_AI_TUPLE);
     assert.equal(s.id, "ai-1");
     assert.equal(s.provider, "claude-ai");
+    assert.equal(s.machine, null);
+  });
+
+  it("dispatches openai tuples correctly", () => {
+    const s = parse(OPENAI_TUPLE);
+    assert.equal(s.id, "oai-1");
+    assert.equal(s.provider, "openai");
     assert.equal(s.machine, null);
   });
 
@@ -83,6 +115,12 @@ describe("registry condense", () => {
     const s = condense(CLAUDE_AI_TUPLE);
     assert.equal(s.id, "ai-1");
     assert.equal(s.provider, "claude-ai");
+  });
+
+  it("dispatches openai tuples correctly", () => {
+    const s = condense(OPENAI_TUPLE);
+    assert.equal(s.id, "oai-1");
+    assert.equal(s.provider, "openai");
   });
 
   it("throws for unknown provider", () => {
