@@ -8,6 +8,7 @@ import { ensureDir, rsyncPath, exec as remoteExec } from "./remote.mjs";
 import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
 import { loadAuth } from "./auth.mjs";
 import { createClient } from "./cloud/claude-ai.mjs";
+import { createClient as createOpenAiClient } from "./cloud/openai.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -78,10 +79,11 @@ async function fullSync(opts) {
   const claudeDir = process.env.CLAUDE_DIR || join(homedir(), ".claude");
   const codexDir = process.env.CODEX_DIR || join(homedir(), ".codex");
 
-  const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
+  const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi || opts.openai;
   const syncClaude = !hasFilter || !!opts.claudeCode;
   const syncCodex = !hasFilter || !!opts.codex;
   const syncCloudClaudeAi = !hasFilter || !!opts.claudeAi;
+  const syncCloudOpenAi = !hasFilter || !!opts.openai;
 
   // Pull latest for git archives
   if (archiveType === "git") {
@@ -147,6 +149,13 @@ async function fullSync(opts) {
   let partialFailure = false;
   if (syncCloudClaudeAi) {
     const result = await syncCloud(archiveDir, opts.dryRun);
+    if (result === "synced") synced = true;
+    if (result === "error") partialFailure = true;
+  }
+
+  // Cloud: ChatGPT web conversations
+  if (syncCloudOpenAi) {
+    const result = await syncOpenAi(archiveDir, opts.dryRun);
     if (result === "synced") synced = true;
     if (result === "error") partialFailure = true;
   }
@@ -231,6 +240,84 @@ async function syncCloud(archiveDir, dryRun) {
         return "error";
       }
       console.warn(`  Warning: failed to fetch ${conv.uuid}: ${e.message}`);
+    }
+  }
+
+  console.log(`  ${fetched} fetched, ${skipped} up-to-date (${conversations.length} total)`);
+  console.log("");
+  return fetched > 0 ? "synced" : "skipped";
+}
+
+// ChatGPT timestamps come as epoch-second floats or ISO strings depending on
+// the endpoint; normalize to whole seconds for comparison.
+function toEpochSec(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return Math.floor(v);
+  const ms = Date.parse(v);
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+}
+
+async function syncOpenAi(archiveDir, dryRun) {
+  const auth = await loadAuth();
+  if (!auth?.openai?.accessToken) {
+    return "skipped";
+  }
+
+  console.log("=== ChatGPT ===");
+  const client = createOpenAiClient(auth.openai.accessToken);
+
+  let conversations;
+  try {
+    conversations = await client.listConversations();
+  } catch (e) {
+    if (e.name === "AuthError") {
+      console.warn("  Warning: ChatGPT access token expired or invalid. Skipping cloud sync.");
+      return "error";
+    }
+    throw e;
+  }
+
+  const cloudDir = join(archiveDir, "cloud", "openai");
+  await mkdir(cloudDir, { recursive: true });
+
+  let fetched = 0;
+  let skipped = 0;
+  for (const conv of conversations) {
+    const destPath = join(cloudDir, `${conv.id}.json`);
+    // Check if we already have this conversation with the same update_time
+    if (existsSync(destPath)) {
+      try {
+        const existing = JSON.parse(await readFile(destPath, "utf-8"));
+        const a = toEpochSec(existing.update_time);
+        const b = toEpochSec(conv.update_time);
+        if (a !== null && a === b) {
+          skipped++;
+          continue;
+        }
+      } catch {}
+    }
+
+    if (dryRun) {
+      console.log(`  Would fetch: ${conv.title || conv.id}`);
+      fetched++;
+      continue;
+    }
+
+    // Rate limit
+    if (fetched > 0) {
+      await new Promise(r => setTimeout(r, CLOUD_FETCH_DELAY));
+    }
+
+    try {
+      const full = await client.getConversation(conv.id);
+      await writeFile(destPath, JSON.stringify(full, null, 2) + "\n", "utf-8");
+      fetched++;
+    } catch (e) {
+      if (e.name === "AuthError") {
+        console.warn("  Warning: ChatGPT access token expired mid-sync.");
+        return "error";
+      }
+      console.warn(`  Warning: failed to fetch ${conv.id}: ${e.message}`);
     }
   }
 

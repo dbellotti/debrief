@@ -50,21 +50,21 @@ export async function loadSessionFiles(archiveDir, filters = {}) {
     }
   }
 
-  // Cloud: claude.ai conversations
+  // Cloud: claude.ai and ChatGPT conversations
   const cloudDir = join(archiveDir, "cloud");
-  if (!providerFilter || providerFilter.has("claude-ai")) {
-    const claudeAiDir = join(cloudDir, "claude-ai");
-    if (existsSync(claudeAiDir)) {
-      let files;
-      try { files = await readdir(claudeAiDir); } catch { files = []; }
-      for (const f of files) {
-        if (!f.endsWith(".json")) continue;
-        const filepath = join(claudeAiDir, f);
-        try {
-          const conv = JSON.parse(await readFile(filepath, "utf-8"));
-          results.push({ provider: "claude-ai", filepath, raw: conv, machine: null });
-        } catch {}
-      }
+  for (const provider of ["claude-ai", "openai"]) {
+    if (providerFilter && !providerFilter.has(provider)) continue;
+    const providerDir = join(cloudDir, provider);
+    if (!existsSync(providerDir)) continue;
+    let files;
+    try { files = await readdir(providerDir); } catch { files = []; }
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      const filepath = join(providerDir, f);
+      try {
+        const conv = JSON.parse(await readFile(filepath, "utf-8"));
+        results.push({ provider, filepath, raw: conv, machine: null });
+      } catch {}
     }
   }
 

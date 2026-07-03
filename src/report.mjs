@@ -6,9 +6,9 @@ import { parse } from "./parsers/registry.mjs";
 
 export async function run(opts) {
   await withArchive(opts.archive, ["machines", "cloud"], async ({ localPath, archiveType }) => {
-    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi;
+    const hasFilter = opts.claudeCode || opts.codex || opts.claudeAi || opts.openai;
     const providerFilter = hasFilter
-      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : [])])
+      ? new Set([...(opts.claudeCode ? ["claude"] : []), ...(opts.codex ? ["codex"] : []), ...(opts.claudeAi ? ["claude-ai"] : []), ...(opts.openai ? ["openai"] : [])])
       : null;
     const isDark = !!opts.dark;
     const dateStr = new Date().toISOString().slice(0, 10);

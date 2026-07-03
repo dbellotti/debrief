@@ -106,6 +106,7 @@ debrief collect --dry-run      # preview
 debrief collect --claude-code  # Claude Code only
 debrief collect --codex        # Codex only
 debrief collect --claude-ai    # claude.ai web conversations only
+debrief collect --openai       # ChatGPT web conversations only
 debrief collect --commit       # git commit after sync (filesystem archives only)
 ```
 
