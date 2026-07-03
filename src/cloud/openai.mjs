@@ -48,8 +48,9 @@ export function createClient(accessToken, { fetch: fetchFn = globalThis.fetch, r
         const page = await request(`/backend-api/conversations?offset=${offset}&limit=${PAGE_SIZE}&order=updated`);
         const pageItems = page.items || [];
         items.push(...pageItems);
-        offset += pageItems.length;
-        if (pageItems.length < PAGE_SIZE || offset >= (page.total ?? 0)) break;
+        if (pageItems.length === 0) break;
+        if (typeof page.total === "number" && items.length >= page.total) break;
+        offset = items.length;
       }
       return items;
     },

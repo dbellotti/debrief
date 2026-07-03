@@ -115,6 +115,10 @@ Providers:
   openai             chatgpt.com - paste your access token
                      (from https://chatgpt.com/api/auth/session)
 
+Examples:
+  debrief auth                 # claude.ai
+  debrief auth openai          # chatgpt.com (--openai also works)
+
 Credentials are stored in ~/.local/share/debrief/auth.json.`,
 
   collect: `Usage: debrief collect [options]

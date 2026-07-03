@@ -4,7 +4,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, hostname } from "node:os";
-import { ensureDir, rsyncPath, exec as remoteExec } from "./remote.mjs";
+import { ensureDir, rsyncPath, exec as remoteExec, localMirror } from "./remote.mjs";
 import { getArchiveType, gitPull, gitCommitAndPush } from "./archive.mjs";
 import { loadAuth } from "./auth.mjs";
 import { createClient } from "./cloud/claude-ai.mjs";
@@ -145,19 +145,18 @@ async function fullSync(opts) {
     }
   }
 
-  // Cloud: claude.ai web conversations
+  // Cloud: claude.ai and ChatGPT web conversations
   let partialFailure = false;
+  const auth = (syncCloudClaudeAi || syncCloudOpenAi) ? await loadAuth() : null;
+  const applyCloudResult = (result) => {
+    if (result === "synced" || result === "partial") synced = true;
+    if (result === "error" || result === "partial") partialFailure = true;
+  };
   if (syncCloudClaudeAi) {
-    const result = await syncCloud(archiveDir, opts.dryRun);
-    if (result === "synced") synced = true;
-    if (result === "error") partialFailure = true;
+    applyCloudResult(await syncCloud(auth, archiveDir, opts.dryRun));
   }
-
-  // Cloud: ChatGPT web conversations
   if (syncCloudOpenAi) {
-    const result = await syncOpenAi(archiveDir, opts.dryRun);
-    if (result === "synced") synced = true;
-    if (result === "error") partialFailure = true;
+    applyCloudResult(await syncOpenAi(auth, archiveDir, opts.dryRun));
   }
 
   if (opts.dryRun) return;
@@ -181,71 +180,98 @@ async function fullSync(opts) {
 
 const CLOUD_FETCH_DELAY = 500;
 
-async function syncCloud(archiveDir, dryRun) {
-  const auth = await loadAuth();
-  if (!auth?.cookie || !auth?.orgId) {
-    return "skipped";
-  }
-
-  console.log("=== Claude.ai ===");
-  const client = createClient(auth.cookie);
+// Shared cloud conversation sync loop. Uses localMirror so SSH archives get a
+// local working copy synced back after fetching. Returns "synced", "skipped",
+// "error" (nothing fetched), or "partial" (auth expired after some fetches).
+async function syncConversations(archiveDir, dryRun, { label, dir, credential, list, get, id, title, isUpToDate }) {
+  console.log(`=== ${label} ===`);
 
   let conversations;
   try {
-    conversations = await client.listConversations(auth.orgId);
+    conversations = await list();
   } catch (e) {
     if (e.name === "AuthError") {
-      console.warn("  Warning: claude.ai cookie expired or invalid. Skipping cloud sync.");
+      console.warn(`  Warning: ${credential} expired or invalid. Skipping cloud sync.`);
       return "error";
     }
     throw e;
   }
 
-  const cloudDir = join(archiveDir, "cloud", "claude-ai");
-  await mkdir(cloudDir, { recursive: true });
+  const subdir = `cloud/${dir}`;
+  const mirror = await localMirror(archiveDir, [subdir]);
+  try {
+    const cloudDir = join(mirror.localPath, "cloud", dir);
+    await mkdir(cloudDir, { recursive: true });
 
-  let fetched = 0;
-  let skipped = 0;
-  for (const conv of conversations) {
-    const destPath = join(cloudDir, `${conv.uuid}.json`);
-    // Check if we already have this conversation with the same updated_at
-    if (existsSync(destPath)) {
-      try {
-        const existing = JSON.parse(await readFile(destPath, "utf-8"));
-        if (existing.updated_at === conv.updated_at) {
-          skipped++;
-          continue;
-        }
-      } catch {}
-    }
-
-    if (dryRun) {
-      console.log(`  Would fetch: ${conv.name || conv.uuid}`);
-      fetched++;
-      continue;
-    }
-
-    // Rate limit
-    if (fetched > 0) {
-      await new Promise(r => setTimeout(r, CLOUD_FETCH_DELAY));
-    }
-
-    try {
-      const full = await client.getConversation(auth.orgId, conv.uuid);
-      await writeFile(destPath, JSON.stringify(full, null, 2) + "\n", "utf-8");
-      fetched++;
-    } catch (e) {
-      if (e.name === "AuthError") {
-        console.warn("  Warning: claude.ai cookie expired mid-sync.");
-        return "error";
+    let fetched = 0;
+    let skipped = 0;
+    let authExpired = false;
+    for (const conv of conversations) {
+      const destPath = join(cloudDir, `${id(conv)}.json`);
+      // Check if we already have this conversation and it's unchanged
+      if (existsSync(destPath)) {
+        try {
+          const existing = JSON.parse(await readFile(destPath, "utf-8"));
+          if (isUpToDate(existing, conv)) {
+            skipped++;
+            continue;
+          }
+        } catch {}
       }
-      console.warn(`  Warning: failed to fetch ${conv.uuid}: ${e.message}`);
-    }
-  }
 
-  console.log(`  ${fetched} fetched, ${skipped} up-to-date (${conversations.length} total)`);
-  console.log("");
-  return fetched > 0 ? "synced" : "skipped";
+      if (dryRun) {
+        console.log(`  Would fetch: ${title(conv) || id(conv)}`);
+        fetched++;
+        continue;
+      }
+
+      // Rate limit
+      if (fetched > 0) {
+        await new Promise(r => setTimeout(r, CLOUD_FETCH_DELAY));
+      }
+
+      try {
+        const full = await get(id(conv));
+        await writeFile(destPath, JSON.stringify(full, null, 2) + "\n", "utf-8");
+        fetched++;
+      } catch (e) {
+        if (e.name === "AuthError") {
+          console.warn(`  Warning: ${credential} expired mid-sync.`);
+          authExpired = true;
+          break;
+        }
+        console.warn(`  Warning: failed to fetch ${id(conv)}: ${e.message}`);
+      }
+    }
+
+    if (!dryRun && fetched > 0) {
+      await mirror.syncBack(subdir);
+    }
+
+    console.log(`  ${fetched} fetched, ${skipped} up-to-date (${conversations.length} total)`);
+    console.log("");
+    if (authExpired) return fetched > 0 ? "partial" : "error";
+    return fetched > 0 ? "synced" : "skipped";
+  } finally {
+    await mirror.cleanup();
+  }
+}
+
+async function syncCloud(auth, archiveDir, dryRun) {
+  if (!auth?.cookie || !auth?.orgId) {
+    return "skipped";
+  }
+  const client = createClient(auth.cookie);
+  return syncConversations(archiveDir, dryRun, {
+    label: "Claude.ai",
+    dir: "claude-ai",
+    credential: "claude.ai cookie",
+    list: () => client.listConversations(auth.orgId),
+    get: (convId) => client.getConversation(auth.orgId, convId),
+    id: (c) => c.uuid,
+    title: (c) => c.name,
+    isUpToDate: (existing, conv) => existing.updated_at === conv.updated_at,
+  });
 }
 
 // ChatGPT timestamps come as epoch-second floats or ISO strings depending on
@@ -257,73 +283,24 @@ function toEpochSec(v) {
   return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
 }
 
-async function syncOpenAi(archiveDir, dryRun) {
-  const auth = await loadAuth();
+async function syncOpenAi(auth, archiveDir, dryRun) {
   if (!auth?.openai?.accessToken) {
     return "skipped";
   }
-
-  console.log("=== ChatGPT ===");
   const client = createOpenAiClient(auth.openai.accessToken);
-
-  let conversations;
-  try {
-    conversations = await client.listConversations();
-  } catch (e) {
-    if (e.name === "AuthError") {
-      console.warn("  Warning: ChatGPT access token expired or invalid. Skipping cloud sync.");
-      return "error";
-    }
-    throw e;
-  }
-
-  const cloudDir = join(archiveDir, "cloud", "openai");
-  await mkdir(cloudDir, { recursive: true });
-
-  let fetched = 0;
-  let skipped = 0;
-  for (const conv of conversations) {
-    const destPath = join(cloudDir, `${conv.id}.json`);
-    // Check if we already have this conversation with the same update_time
-    if (existsSync(destPath)) {
-      try {
-        const existing = JSON.parse(await readFile(destPath, "utf-8"));
-        const a = toEpochSec(existing.update_time);
-        const b = toEpochSec(conv.update_time);
-        if (a !== null && a === b) {
-          skipped++;
-          continue;
-        }
-      } catch {}
-    }
-
-    if (dryRun) {
-      console.log(`  Would fetch: ${conv.title || conv.id}`);
-      fetched++;
-      continue;
-    }
-
-    // Rate limit
-    if (fetched > 0) {
-      await new Promise(r => setTimeout(r, CLOUD_FETCH_DELAY));
-    }
-
-    try {
-      const full = await client.getConversation(conv.id);
-      await writeFile(destPath, JSON.stringify(full, null, 2) + "\n", "utf-8");
-      fetched++;
-    } catch (e) {
-      if (e.name === "AuthError") {
-        console.warn("  Warning: ChatGPT access token expired mid-sync.");
-        return "error";
-      }
-      console.warn(`  Warning: failed to fetch ${conv.id}: ${e.message}`);
-    }
-  }
-
-  console.log(`  ${fetched} fetched, ${skipped} up-to-date (${conversations.length} total)`);
-  console.log("");
-  return fetched > 0 ? "synced" : "skipped";
+  return syncConversations(archiveDir, dryRun, {
+    label: "ChatGPT",
+    dir: "openai",
+    credential: "ChatGPT access token",
+    list: () => client.listConversations(),
+    get: (convId) => client.getConversation(convId),
+    id: (c) => c.id,
+    title: (c) => c.title,
+    isUpToDate: (existing, conv) => {
+      const a = toEpochSec(existing.update_time);
+      return a !== null && a === toEpochSec(conv.update_time);
+    },
+  });
 }
 
 async function rsync(src, dest, dryRun) {

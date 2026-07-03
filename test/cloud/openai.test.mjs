@@ -99,6 +99,44 @@ describe("createClient (openai)", () => {
       assert.equal(urls.length, 2);
       assert.ok(urls[1].includes("offset=100"));
     });
+
+    it("keeps paginating when total is missing, stopping on an empty page", async () => {
+      const allItems = Array.from({ length: 100 }, (_, i) => ({ id: `conv-${i}` }));
+      let calls = 0;
+      const client = createClient(TOKEN, {
+        fetch: mockFetch((url) => {
+          calls++;
+          const offset = parseInt(new URL(url).searchParams.get("offset"));
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ items: allItems.slice(offset, offset + 100) }),
+          };
+        }),
+      });
+
+      const result = await client.listConversations();
+      assert.equal(result.length, 100);
+      assert.equal(calls, 2);
+    });
+
+    it("continues past short pages when total says more remain", async () => {
+      const allItems = Array.from({ length: 120 }, (_, i) => ({ id: `conv-${i}` }));
+      const client = createClient(TOKEN, {
+        fetch: mockFetch((url) => {
+          const offset = parseInt(new URL(url).searchParams.get("offset"));
+          // Server clamps pages to 50 items regardless of requested limit
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ items: allItems.slice(offset, offset + 50), total: 120 }),
+          };
+        }),
+      });
+
+      const result = await client.listConversations();
+      assert.equal(result.length, 120);
+    });
   });
 
   describe("getConversation", () => {

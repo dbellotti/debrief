@@ -28,7 +28,7 @@ async function saveAuth(fields) {
 }
 
 export async function run(flags = {}) {
-  const provider = flags._?.[0] || "claude-ai";
+  const provider = flags._?.[0] || (flags.openai ? "openai" : "claude-ai");
   if (provider === "claude-ai") {
     await authClaudeAi();
   } else if (provider === "openai") {

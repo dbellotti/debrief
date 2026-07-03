@@ -542,7 +542,8 @@ function render() {
 
   const providers = [...new Set(sessions.map(s => s.provider))];
   const machines = [...new Set(sessions.map(s => s.machine))];
-  const provLabel = providers.length === 1 ? (providers[0] === "codex" ? "Codex" : "Claude Code") : "All Agents";
+  const provNames = { claude: "Claude Code", codex: "Codex", "claude-ai": "Claude.ai", openai: "ChatGPT" };
+  const provLabel = providers.length === 1 ? (provNames[providers[0]] || providers[0]) : "All Agents";
   document.getElementById("subtitle").textContent = provLabel + " · " + agg.dateRange.start + " to " + agg.dateRange.end + " · " + machines.length + " machine(s) · " + sessions.length + " sessions";
 
   renderCards(agg);
