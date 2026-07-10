@@ -25,6 +25,7 @@ Commands:
   schedule       Install/remove scheduled collection service
   report         Generate quantitative insights dashboard
   review         Generate qualitative session analysis
+  card           Generate a contribution-style usage heatmap SVG
 
 Options:
   --archive <path>   Path to archive directory
@@ -191,6 +192,18 @@ Options:
   --concurrency <n>  Parallel LLM requests
   -o <path>          Output file path
   --help             Show this help`,
+
+  card: `Usage: debrief card [options]
+
+Generate a contribution-style usage heatmap SVG, suitable for
+embedding in a GitHub profile README. The card contains only
+non-identifying daily aggregates — no project names, machine
+names, or session content.
+
+Options:
+  --archive <path>   Path to archive directory
+  -o <path>          Output file path (default: ./usage-light.svg)
+  --help             Show this help`,
 };
 
 async function main() {
@@ -235,6 +248,12 @@ async function main() {
     case "review": {
       const archive = resolveArchive(flags);
       const { run } = await import("../src/review.mjs");
+      await run({ ...flags, archive });
+      break;
+    }
+    case "card": {
+      const archive = resolveArchive(flags);
+      const { run } = await import("../src/card.mjs");
       await run({ ...flags, archive });
       break;
     }
