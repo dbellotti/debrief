@@ -1,5 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   localDateKey,
   buildDailyTotals,
@@ -7,6 +11,7 @@ import {
   levelFor,
   buildGrid,
   renderCard,
+  run,
 } from "../src/card.mjs";
 
 // 2026-07-08 is a Wednesday
@@ -114,4 +119,83 @@ test("renderCard colors the active day and leaves others empty", () => {
   assert.strictEqual(nonEmpty.length, 1, "exactly one colored cell");
   // with a single nonzero day, all quartile thresholds equal its value → level 1
   assert.strictEqual(nonEmpty[0], "#c7d2fe");
+});
+
+test("renderCard selects the palette for the requested theme", () => {
+  const byDate = { [localDateKey(END)]: { sessions: 1, tokens: 500 } };
+  const light = renderCard({ byDate, endDate: END, theme: "light" });
+  const dark = renderCard({ byDate, endDate: END, theme: "dark" });
+
+  // Dark uses its own empty/active cells and label color; none of the light hexes leak.
+  assert.ok(dark.includes('fill="#161b22"'), "dark empty cell");
+  assert.ok(dark.includes('fill="#1e1b4b"'), "dark level-1 cell");
+  assert.ok(dark.includes('fill="#8b949e"'), "dark label color");
+  for (const lightHex of ["#ebedf0", "#c7d2fe", "#59636e"]) {
+    assert.ok(!dark.includes(lightHex), `dark must not contain light hex ${lightHex}`);
+  }
+  assert.ok(light.includes('fill="#ebedf0"') && light.includes('fill="#c7d2fe"'));
+});
+
+test("both themes share identical geometry and data, differing only in color", () => {
+  const byDate = { [localDateKey(END)]: { sessions: 1, tokens: 500 } };
+  const strip = svg => svg.replace(/fill="#[0-9a-f]{6}"/g, 'fill="X"');
+  const light = renderCard({ byDate, endDate: END, theme: "light" });
+  const dark = renderCard({ byDate, endDate: END, theme: "dark" });
+  assert.strictEqual(strip(light), strip(dark), "only fill colors should differ");
+  assert.notStrictEqual(light, dark, "colors must actually differ");
+});
+
+test("run emits both themed variants into --out-dir with transparent backgrounds", async (t) => {
+  const configHome = await mkdtemp(join(tmpdir(), "debrief-cfg-"));
+  const archive = await mkdtemp(join(tmpdir(), "debrief-arch-"));
+  const outDir = await mkdtemp(join(tmpdir(), "debrief-out-"));
+  await mkdir(join(archive, "machines"), { recursive: true });
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = configHome; // isolate from the real user config
+  t.after(async () => {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    await rm(configHome, { recursive: true, force: true });
+    await rm(archive, { recursive: true, force: true });
+    await rm(outDir, { recursive: true, force: true });
+  });
+
+  await run({ archive, outDir });
+
+  const lightPath = join(outDir, "usage-light.svg");
+  const darkPath = join(outDir, "usage-dark.svg");
+  assert.ok(existsSync(lightPath), "usage-light.svg written");
+  assert.ok(existsSync(darkPath), "usage-dark.svg written");
+
+  const light = await readFile(lightPath, "utf-8");
+  const dark = await readFile(darkPath, "utf-8");
+  assert.ok(light.includes('fill="#ebedf0"'), "light palette in light file");
+  assert.ok(dark.includes('fill="#161b22"'), "dark palette in dark file");
+  for (const svg of [light, dark]) {
+    assert.ok(!svg.includes('<rect x="0"'), "no background rect — transparent");
+  }
+});
+
+test("run with -o writes only the light variant to the exact path", async (t) => {
+  const configHome = await mkdtemp(join(tmpdir(), "debrief-cfg-"));
+  const archive = await mkdtemp(join(tmpdir(), "debrief-arch-"));
+  const outDir = await mkdtemp(join(tmpdir(), "debrief-out-"));
+  await mkdir(join(archive, "machines"), { recursive: true });
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = configHome;
+  t.after(async () => {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    await rm(configHome, { recursive: true, force: true });
+    await rm(archive, { recursive: true, force: true });
+    await rm(outDir, { recursive: true, force: true });
+  });
+
+  const output = join(outDir, "card.svg");
+  await run({ archive, output });
+
+  assert.ok(existsSync(output), "wrote to the exact -o path");
+  assert.ok(!existsSync(join(outDir, "usage-light.svg")), "no default light file");
+  assert.ok(!existsSync(join(outDir, "usage-dark.svg")), "no dark file with -o");
+  const svg = await readFile(output, "utf-8");
+  assert.ok(svg.includes('fill="#ebedf0"'), "light palette");
+  assert.ok(!svg.includes('fill="#161b22"'), "not dark palette");
 });
