@@ -56,6 +56,42 @@ export function levelFor(tokens, [t1, t2, t3]) {
   return 1;
 }
 
+/** Compact token count, e.g. 950, 12.3k, 4.5M, 1.2B. */
+export function fmt(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(n);
+}
+
+/** Longest run of consecutive calendar days among the given date keys. */
+export function longestStreak(dateKeys) {
+  const sorted = [...dateKeys].sort();
+  let longest = 0, run = 0, prev = null;
+  for (const dk of sorted) {
+    run = prev && (new Date(dk) - new Date(prev)) / 86400000 === 1 ? run + 1 : 1;
+    if (run > longest) longest = run;
+    prev = dk;
+  }
+  return longest;
+}
+
+/** Non-identifying aggregates over the rendered window (sorted day keys). */
+export function windowStats(byDate, dayKeys) {
+  let sessions = 0, tokens = 0;
+  const active = [];
+  for (const dk of dayKeys) {
+    const d = byDate[dk];
+    if (d && d.sessions > 0) { sessions += d.sessions; tokens += d.tokens; active.push(dk); }
+  }
+  return {
+    sessions, tokens,
+    activeDays: active.length,
+    longestStreak: longestStreak(active),
+    start: dayKeys[0], end: dayKeys[dayKeys.length - 1],
+  };
+}
+
 /**
  * Trailing-12-month grid ending at endDate, GitHub-style: columns are
  * Sunday-to-Saturday weeks, starting at the Sunday on/before one year back.
@@ -98,7 +134,9 @@ export function renderCard({ byDate, endDate, theme = "light" }) {
   const thresholds = quartileThresholds(nonzero);
 
   const width = LEFT + weeks.length * PITCH - GAP;
-  const height = TOP + 7 * PITCH - GAP;
+  const gridBottom = TOP + 7 * PITCH - GAP;
+  const stripY = gridBottom + 16;
+  const height = stripY + 8;
 
   const parts = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="LLM usage heatmap, trailing 12 months">`);
@@ -115,10 +153,25 @@ export function renderCard({ byDate, endDate, theme = "light" }) {
     for (let row = 0; row < 7; row++) {
       const dk = weeks[col][row];
       if (!dk) continue;
-      const level = levelFor(byDate[dk]?.tokens || 0, thresholds);
-      parts.push(`<rect x="${LEFT + col * PITCH}" y="${TOP + row * PITCH}" width="${CELL}" height="${CELL}" rx="2" fill="${palette.levels[level]}"/>`);
+      const d = byDate[dk];
+      const tokens = d?.tokens || 0;
+      const level = levelFor(tokens, thresholds);
+      const rect = `<rect x="${LEFT + col * PITCH}" y="${TOP + row * PITCH}" width="${CELL}" height="${CELL}" rx="2" fill="${palette.levels[level]}"`;
+      if (tokens > 0) {
+        const s = d.sessions;
+        parts.push(`${rect}><title>${dk}: ${s} session${s === 1 ? "" : "s"}, ${d.tokens} tokens</title></rect>`);
+      } else {
+        parts.push(`${rect}/>`);
+      }
     }
   }
+
+  const stats = windowStats(byDate, cellDays);
+  const headline = `${stats.sessions} sessions · ${fmt(stats.tokens)} tokens · ${stats.activeDays} active days · ${stats.longestStreak}d streak · ${stats.start} – ${stats.end}`;
+  parts.push(`<g font-family="${FONT}" font-size="10" fill="${palette.label}">`);
+  parts.push(`<text x="${LEFT}" y="${stripY}">${headline}</text>`);
+  parts.push(`<text x="${width}" y="${stripY}" text-anchor="end">updated ${localDateKey(endDate)}</text>`);
+  parts.push(`</g>`);
   parts.push(`</svg>`);
   return parts.join("\n");
 }
