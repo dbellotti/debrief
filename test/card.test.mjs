@@ -12,6 +12,9 @@ import {
   buildGrid,
   renderCard,
   run,
+  fmt,
+  longestStreak,
+  windowStats,
 } from "../src/card.mjs";
 
 // 2026-07-08 is a Wednesday
@@ -114,7 +117,7 @@ test("renderCard colors the active day and leaves others empty", () => {
   const activeKey = localDateKey(END);
   const byDate = { [activeKey]: { sessions: 1, tokens: 500 } };
   const svg = renderCard({ byDate, endDate: END });
-  const fills = [...svg.matchAll(/fill="(#[0-9a-f]{6})"\/>/g)].map(m => m[1]);
+  const fills = [...svg.matchAll(/<rect[^>]*fill="(#[0-9a-f]{6})"/g)].map(m => m[1]);
   const nonEmpty = fills.filter(f => f !== "#ebedf0");
   assert.strictEqual(nonEmpty.length, 1, "exactly one colored cell");
   // with a single nonzero day, all quartile thresholds equal its value → level 1
@@ -198,4 +201,87 @@ test("run with -o writes only the light variant to the exact path", async (t) =>
   const svg = await readFile(output, "utf-8");
   assert.ok(svg.includes('fill="#ebedf0"'), "light palette");
   assert.ok(!svg.includes('fill="#161b22"'), "not dark palette");
+});
+
+test("fmt renders compact token counts", () => {
+  assert.strictEqual(fmt(950), "950");
+  assert.strictEqual(fmt(12_300), "12.3k");
+  assert.strictEqual(fmt(4_500_000), "4.5M");
+  assert.strictEqual(fmt(1_200_000_000), "1.2B");
+});
+
+test("longestStreak finds the longest contiguous run", () => {
+  assert.strictEqual(longestStreak([]), 0);
+  assert.strictEqual(longestStreak(["2026-01-01"]), 1);
+  // two runs: Jan 1-3 (3) and Jan 10-11 (2); order-independent
+  assert.strictEqual(
+    longestStreak(["2026-01-11", "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-10"]),
+    3,
+  );
+  // run spanning a month boundary is contiguous
+  assert.strictEqual(longestStreak(["2026-01-30", "2026-01-31", "2026-02-01"]), 3);
+});
+
+test("windowStats aggregates only over the given window days", () => {
+  const byDate = {
+    "2026-07-06": { sessions: 2, tokens: 100 },
+    "2026-07-07": { sessions: 1, tokens: 50 },
+    "2026-07-08": { sessions: 3, tokens: 900 },
+    "2026-01-01": { sessions: 9, tokens: 9999 }, // outside the window
+  };
+  const stats = windowStats(byDate, ["2026-07-06", "2026-07-07", "2026-07-08"]);
+  assert.strictEqual(stats.sessions, 6);
+  assert.strictEqual(stats.tokens, 1050);
+  assert.strictEqual(stats.activeDays, 3);
+  assert.strictEqual(stats.longestStreak, 3);
+  assert.strictEqual(stats.start, "2026-07-06");
+  assert.strictEqual(stats.end, "2026-07-08");
+});
+
+test("windowStats streak respects gaps within the window", () => {
+  const byDate = {
+    "2026-07-01": { sessions: 1, tokens: 10 },
+    "2026-07-02": { sessions: 1, tokens: 10 },
+    // gap on 07-03
+    "2026-07-04": { sessions: 1, tokens: 10 },
+  };
+  const days = ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"];
+  const stats = windowStats(byDate, days);
+  assert.strictEqual(stats.activeDays, 3);
+  assert.strictEqual(stats.longestStreak, 2);
+});
+
+test("renderCard adds a headline strip and freshness stamp", () => {
+  const byDate = {
+    [localDateKey(END)]: { sessions: 3, tokens: 12_300 },
+    [localDateKey(new Date(2026, 6, 7))]: { sessions: 1, tokens: 400 },
+  };
+  const svg = renderCard({ byDate, endDate: END });
+  assert.ok(svg.includes("4 sessions"), "total sessions in strip");
+  assert.ok(svg.includes("12.7k tokens"), "total tokens formatted in strip");
+  assert.ok(svg.includes("2 active days"), "active-day count in strip");
+  assert.ok(/\dd streak/.test(svg), "longest streak in strip");
+  assert.ok(svg.includes(`updated ${localDateKey(END)}`), "freshness stamp reflects endDate");
+  // window range spans the rendered cells
+  const { weeks } = buildGrid(END);
+  const days = weeks.flat().filter(Boolean);
+  assert.ok(svg.includes(`${days[0]} – ${days[days.length - 1]}`), "window date range");
+});
+
+test("renderCard gives every nonzero cell a native title, zero cells none", () => {
+  const byDate = { [localDateKey(END)]: { sessions: 2, tokens: 1000 } };
+  const svg = renderCard({ byDate, endDate: END });
+  const titles = svg.match(/<title>/g) || [];
+  assert.strictEqual(titles.length, 1, "one title per nonzero cell");
+  assert.ok(
+    svg.includes(`<title>${localDateKey(END)}: 2 sessions, 1000 tokens</title>`),
+    "title carries date, session count, token count",
+  );
+  // title lives inside a non-self-closing rect
+  assert.ok(/<rect[^>]*><title>[^<]*<\/title><\/rect>/.test(svg));
+  // singular session wording
+  const svg1 = renderCard({ byDate: { [localDateKey(END)]: { sessions: 1, tokens: 5 } }, endDate: END });
+  assert.ok(svg1.includes("1 session,"), "singular 'session' for a single-session day");
+  // still self-contained
+  assert.ok(!svg.includes("<script") && !/href|url\(|@import/.test(svg));
 });

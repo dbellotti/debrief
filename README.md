@@ -2,9 +2,10 @@
 
 Sync, analyze, and visualize your Claude Code and Codex sessions.
 
-`debrief` is a CLI that archives your AI coding sessions and generates two kinds of reports:
+`debrief` is a CLI that archives your AI coding sessions and generates reports:
 - **Quantitative** — an interactive HTML dashboard with token usage, activity heatmaps, trends, and tool breakdowns
 - **Qualitative** — LLM-powered analysis of session goals, outcomes, friction points, and recommendations
+- **Card** — a contribution-style usage heatmap SVG, safe to embed in a GitHub profile README
 
 Zero runtime dependencies. Shells out to `claude` / `codex` CLIs for qualitative analysis.
 
@@ -142,6 +143,34 @@ debrief review --min-turns 3          # skip shallow sessions
 ```
 
 Caches per-session facets in `<archive>/facets/`. Re-runs only analyze new sessions.
+
+### `debrief card`
+
+Generate a GitHub-contributions-style heatmap of your LLM usage as
+self-contained static SVGs, ready to embed in a GitHub profile README.
+
+```sh
+debrief card                   # usage-light.svg + usage-dark.svg in cwd
+debrief card --out-dir ./out   # both variants into a directory
+debrief card -o card.svg       # only the light variant, exact path
+```
+
+The card shows the trailing 12 months. Cell color encodes tokens per day,
+bucketed into quartile bands over your active days; hovering a cell shows
+its date, session count, and token count. A headline strip beneath the
+grid carries totals (sessions, tokens, active days, longest streak) and
+an `updated YYYY-MM-DD` stamp so staleness is visible at a glance.
+
+The card is safe to publish: it contains only non-identifying daily
+aggregates — project names, machine names, and session content have no
+path into the output. Embed it theme-aware with:
+
+```html
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="usage-dark.svg">
+  <img src="usage-light.svg" alt="LLM usage heatmap">
+</picture>
+```
 
 ## Archive resolution
 
