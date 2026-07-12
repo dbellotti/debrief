@@ -74,6 +74,7 @@ function parseFlags(args) {
     else if (arg === "--min-duration" && i + 1 < args.length) { flags.minDuration = parseInt(args[++i]); }
     else if (arg === "--min-turns" && i + 1 < args.length) { flags.minTurns = parseInt(args[++i]); }
     else if (arg === "-o" && i + 1 < args.length) { flags.output = resolve(args[++i]); }
+    else if (arg === "--out-dir" && i + 1 < args.length) { flags.outDir = resolve(args[++i]); }
     else if (arg === "--help" || arg === "-h") { flags.help = true; }
     else if (arg === "--version" || arg === "-v") { flags.version = true; }
     else if (!arg.startsWith("-")) { flags._.push(arg); }
@@ -195,14 +196,19 @@ Options:
 
   card: `Usage: debrief card [options]
 
-Generate a contribution-style usage heatmap SVG, suitable for
-embedding in a GitHub profile README. The card contains only
-non-identifying daily aggregates — no project names, machine
-names, or session content.
+Generate contribution-style usage heatmap SVGs, suitable for
+embedding in a GitHub profile README via a <picture> element with
+prefers-color-scheme. The card contains only non-identifying daily
+aggregates — no project names, machine names, or session content.
+
+By default, emits both usage-light.svg and usage-dark.svg (same
+geometry and data, palettes tuned for GitHub's light/dark pages).
 
 Options:
   --archive <path>   Path to archive directory
-  -o <path>          Output file path (default: ./usage-light.svg)
+  --out-dir <dir>    Directory for usage-light.svg and usage-dark.svg
+                     (default: current directory)
+  -o <path>          Write only the light variant to this exact path
   --help             Show this help`,
 };
 

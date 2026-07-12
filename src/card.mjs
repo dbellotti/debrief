@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { withArchive } from "./archive.mjs";
 import { loadSessionFiles } from "./sessions.mjs";
@@ -16,6 +16,7 @@ const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov
 
 const PALETTES = {
   light: { levels: ["#ebedf0", "#c7d2fe", "#818cf8", "#4f46e5", "#312e81"], label: "#59636e" },
+  dark: { levels: ["#161b22", "#1e1b4b", "#3730a3", "#6366f1", "#a5b4fc"], label: "#8b949e" },
 };
 
 export function localDateKey(d) {
@@ -127,9 +128,21 @@ export async function run(opts) {
     const tuples = await loadSessionFiles(localPath);
     const sessions = tuples.map(t => { try { return parse(t); } catch { return null; } }).filter(s => s && s.startTime);
     const byDate = buildDailyTotals(sessions);
-    const svg = renderCard({ byDate, endDate: new Date(), theme: "light" });
-    const outputPath = opts.output || resolve("usage-light.svg");
-    await writeFile(outputPath, svg, "utf-8");
-    console.log(`Card saved to: ${outputPath}`);
+    const endDate = new Date();
+
+    // -o writes only the light variant to an exact path (backward compat).
+    // Otherwise emit both themed variants into --out-dir (default: cwd).
+    if (opts.output) {
+      await writeFile(opts.output, renderCard({ byDate, endDate, theme: "light" }), "utf-8");
+      console.log(`Card saved to: ${opts.output}`);
+      return;
+    }
+    const dir = opts.outDir || process.cwd();
+    await mkdir(dir, { recursive: true });
+    for (const theme of ["light", "dark"]) {
+      const outputPath = resolve(dir, `usage-${theme}.svg`);
+      await writeFile(outputPath, renderCard({ byDate, endDate, theme }), "utf-8");
+      console.log(`Card saved to: ${outputPath}`);
+    }
   });
 }
